@@ -5,14 +5,48 @@ workflows:
       flutter: stable
       xcode: latest
       cocoapods: default
+
     scripts:
+      # 1) Install Pub dependencies
       - name: Install dependencies
         script: flutter pub get
+
+      # 2) Clean any stale build outputs
+      - name: Clean previous build artifacts
+        script: |
+          flutter clean
+          rm -rf android/app/build
+
+      # 3) Give Gradle more heap (4.5 GB) to avoid splitter OOM
+      - name: Ensure Gradle JVM args
+        script: |
+          # Append if not already present
+          grep -qxF 'org.gradle.jvmargs=-Xmx4608m' android/gradle.properties \
+            || echo 'org.gradle.jvmargs=-Xmx4608m' >> android/gradle.properties
+
+      # 4) Optionally disable ABI & density splits (uncomment if you prefer)
+      #- name: Disable APK splits
+      #  script: |
+      #    apply_patch << 'EOF'
+      #    *** Begin Patch
+      #    *** Update File: android/app/build.gradle
+      #    @@ android {
+      #       splits {
+      #         abi { enable false }
+      #         density { enable false }
+      #       }
+      #    }
+      #    *** End Patch
+      #    EOF
+
+      # 5) Build the release APK
       - name: Build APK
         script: flutter build apk --release
+
     artifacts:
       - build/app/outputs/flutter-apk/app-release.apk
-#    publishing:
-#      email:
-#        recipients:
-#          - your-mzaziforex@gmail.com
+
+# publishing:
+#   email:
+#     recipients:
+#       - your-mzaziforex@gmail.com
