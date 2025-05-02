@@ -588,6 +588,114 @@ class FeaturedSliderState extends State<FeaturedSlider> {
 
   @override
   Widget build(BuildContext context) {
+    return SizedBox(
+      height: 320,
+      child: featuredContent.isEmpty
+          ? buildFeaturedPlaceholder()
+          : PageView.builder(
+              controller: pageController,
+              scrollDirection: Axis.vertical,
+              itemCount: featuredContent.length,
+              onPageChanged: (index) {
+                setState(() => currentPage = index);
+                if (index >= featuredContent.length - 2 && !isLoading) {
+                  loadMoreContent();
+                }
+              },
+              itemBuilder: (context, index) {
+                final item = featuredContent[index];
+                final imageUrl =
+                    'https://image.tmdb.org/t/p/w500${item['backdrop_path'] ?? item['poster_path'] ?? ''}';
+                final title = item['title'] ?? item['name'] ?? 'Featured';
+                final releaseDate =
+                    item['release_date'] ?? item['first_air_date'] ?? 'Unknown';
+                final genres = item['genre_ids'] != null
+                    ? List<int>.from(item['genre_ids'])
+                    : <int>[];
+                final rating = item['vote_average'] != null
+                    ? double.tryParse(item['vote_average'].toString()) ?? 0.0
+                    : 0.0;
+                final trailerUrl = item['trailer_url'] ??
+                    'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
+                return FeaturedMovieCard(
+                  imageUrl: imageUrl,
+                  title: title,
+                  releaseDate: releaseDate,
+                  genres: genres,
+                  rating: rating,
+                  trailerUrl: trailerUrl,
+                  isCurrentPage: index == currentPage,
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => MovieDetailScreen(movie: item),
+                      ),
+                    );
+                  },
+                );
+              },
+            ),
+    );
+  }
+}
+
+/// HomeScreenMain widget: Main screen with optimized structure
+class HomeScreenMain extends StatefulWidget {
+  final String? profileName;
+  const HomeScreenMain({Key? key, this.profileName}) : super(key: key);
+
+  @override
+  HomeScreenMainState createState() => HomeScreenMainState();
+}
+
+class HomeScreenMainState extends State<HomeScreenMain>
+    with SingleTickerProviderStateMixin {
+  int selectedIndex = 0;
+  late AnimationController _textAnimationController;
+  late Animation<double> _textFadeAnimation;
+  final _subHomeScreenKey = GlobalKey<SubHomeScreenState>();
+
+  @override
+  void initState() {
+    super.initState();
+    _textAnimationController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1000),
+    );
+    _textFadeAnimation = Tween<double>(begin: 0, end: 1).animate(
+      CurvedAnimation(parent: _textAnimationController, curve: Curves.easeIn),
+    );
+    _textAnimationController.forward();
+  }
+
+  Future<void> refreshData() async {
+    await _subHomeScreenKey.currentState?.refreshData();
+  }
+
+  void onItemTapped(int index) {
+    setState(() => selectedIndex = index);
+    if (index == 1) {
+      Navigator.push(context,
+          MaterialPageRoute(builder: (context) => const CategoriesScreen()));
+    } else if (index == 2) {
+      Navigator.push(context,
+          MaterialPageRoute(builder: (context) => const DownloadsScreen()));
+    } else if (index == 3) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => InteractiveFeaturesScreen(
+            isDarkMode: false,
+            onThemeChanged: (bool newValue) {},
+          ),
+        ),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final screenHeight = MediaQuery.of(context).size.height;
     return Consumer<SettingsProvider>(
       builder: (context, settings, child) {
@@ -876,44 +984,6 @@ class FeaturedSliderState extends State<FeaturedSlider> {
         );
       },
     );
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    _textAnimationController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1000),
-    );
-    _textFadeAnimation = Tween<double>(begin: 0, end: 1).animate(
-      CurvedAnimation(parent: _textAnimationController, curve: Curves.easeIn),
-    );
-    _textAnimationController.forward();
-  }
-
-  Future<void> refreshData() async {
-    await _subHomeScreenKey.currentState?.refreshData();
-  }
-
-  void onItemTapped(int index) {
-    setState(() => selectedIndex = index);
-    if (index == 1) {
-      Navigator.push(context,
-          MaterialPageRoute(builder: (context) => const CategoriesScreen()));
-    } else if (index == 2) {
-      Navigator.push(context,
-          MaterialPageRoute(builder: (context) => const DownloadsScreen()));
-    } else if (index == 3) {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => InteractiveFeaturesScreen(
-            isDarkMode: false,
-            onThemeChanged: (bool newValue) {},
-          ),
-        ),
-      );
-    }
   }
 
   @override
