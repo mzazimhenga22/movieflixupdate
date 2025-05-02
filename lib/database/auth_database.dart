@@ -1,11 +1,10 @@
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
 import 'package:sqflite/sqflite.dart' as sqflite;
 import 'package:sembast/sembast.dart' as sembast;
 import 'package:sembast_web/sembast_web.dart';
 import 'package:path/path.dart';
 import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:movie_app/users.dart';
 
 class AuthDatabase {
   static final AuthDatabase instance = AuthDatabase._init();
@@ -17,22 +16,13 @@ class AuthDatabase {
   final _userStore = sembast.stringMapStoreFactory.store('users');
   final _profileStore = sembast.stringMapStoreFactory.store('profiles');
   final _messageStore = sembast.stringMapStoreFactory.store('messages');
-  final _conversationStore =
-      sembast.stringMapStoreFactory.store('conversations');
+  final _conversationStore = sembast.stringMapStoreFactory.store('conversations');
   final _followersStore = sembast.stringMapStoreFactory.store('followers');
-
-  late final Users _users;
 
   AuthDatabase._init();
 
   Future<void> initialize() async {
-    final db = await database;
-    _users = Users(
-      firestore: _firestore,
-      database: kIsWeb ? null : db as sqflite.Database,
-      dbFactory: kIsWeb ? databaseFactoryWeb : null,
-      userStore: _userStore,
-    );
+    await database; // Ensure database is initialized
   }
 
   Future<dynamic> get database async {
@@ -91,8 +81,7 @@ class AuthDatabase {
         )
       ''');
 
-      await db
-          .execute('CREATE INDEX idx_profiles_user_id ON profiles(user_id)');
+      await db.execute('CREATE INDEX idx_profiles_user_id ON profiles(user_id)');
 
       await db.execute('''
         CREATE TABLE messages (
@@ -126,7 +115,7 @@ class AuthDatabase {
         )
       ''');
     } catch (e) {
-      print('Error creating SQLite tables: $e');
+      debugPrint('Error creating SQLite tables: $e');
       rethrow;
     }
   }
@@ -149,8 +138,7 @@ class AuthDatabase {
             sembast.Filter.equals('following_id', followingId),
           ]),
         );
-        final record =
-            await _followersStore.findFirst(await database, finder: finder);
+        final record = await _followersStore.findFirst(await database, finder: finder);
         return record != null;
       } else {
         final result = await (await database).query(
@@ -225,8 +213,7 @@ class AuthDatabase {
     final profileData = {
       'user_id': profile['user_id'].toString(),
       'name': profile['name']?.toString() ?? 'Profile',
-      'avatar':
-          profile['avatar']?.toString() ?? 'https://via.placeholder.com/200',
+      'avatar': profile['avatar']?.toString() ?? 'https://via.placeholder.com/200',
       'backgroundImage': profile['backgroundImage']?.toString(),
       'pin': profile['pin']?.toString(),
       'locked': profile['locked']?.toInt() ?? 0,
@@ -270,8 +257,7 @@ class AuthDatabase {
         final finder = sembast.Finder(
             filter: sembast.Filter.equals('user_id', userId),
             sortOrders: [sembast.SortOrder('created_at')]);
-        final records =
-            await _profileStore.find(await database, finder: finder);
+        final records = await _profileStore.find(await database, finder: finder);
         localProfiles = records.map((r) {
           final profileData = Map<String, dynamic>.from(r.value);
           profileData['id'] = r.key;
@@ -316,8 +302,7 @@ class AuthDatabase {
 
   Future<Map<String, dynamic>?> getProfileById(String profileId) async {
     try {
-      final firestoreDoc =
-          await _firestore.collection('profiles').doc(profileId).get();
+      final firestoreDoc = await _firestore.collection('profiles').doc(profileId).get();
       if (firestoreDoc.exists) {
         final data = firestoreDoc.data()!;
         data['id'] = firestoreDoc.id;
@@ -325,8 +310,7 @@ class AuthDatabase {
       }
 
       if (kIsWeb) {
-        final record =
-            await _profileStore.record(profileId).get(await database);
+        final record = await _profileStore.record(profileId).get(await database);
         if (record != null) {
           final profileData = Map<String, dynamic>.from(record);
           profileData['id'] = profileId;
@@ -334,8 +318,7 @@ class AuthDatabase {
         }
         return null;
       } else {
-        final result = await (await database)
-            .query('profiles', where: 'id = ?', whereArgs: [profileId]);
+        final result = await (await database).query('profiles', where: 'id = ?', whereArgs: [profileId]);
         if (result.isNotEmpty) {
           final profileData = Map<String, dynamic>.from(result.first);
           profileData['id'] = profileData['id'].toString();
@@ -371,8 +354,7 @@ class AuthDatabase {
           ]),
           sortOrders: [sembast.SortOrder('created_at')],
         );
-        final record =
-            await _profileStore.findFirst(await database, finder: finder);
+        final record = await _profileStore.findFirst(await database, finder: finder);
         if (record != null) {
           final profileData = Map<String, dynamic>.from(record.value);
           profileData['id'] = record.key;
@@ -406,14 +388,9 @@ class AuthDatabase {
 
     try {
       final profileId = profileData['id'].toString();
-      await _firestore
-          .collection('profiles')
-          .doc(profileId)
-          .update(profileData);
+      await _firestore.collection('profiles').doc(profileId).update(profileData);
       if (kIsWeb) {
-        await _profileStore
-            .record(profileId)
-            .update(await database, profileData);
+        await _profileStore.record(profileId).update(await database, profileData);
       } else {
         await (await database).update(
           'profiles',
@@ -435,8 +412,7 @@ class AuthDatabase {
         await _profileStore.record(profileId).delete(await database);
         return 1;
       } else {
-        return await (await database)
-            .delete('profiles', where: 'id = ?', whereArgs: [profileId]);
+        return await (await database).delete('profiles', where: 'id = ?', whereArgs: [profileId]);
       }
     } catch (e) {
       throw Exception('Failed to delete profile: $e');
@@ -470,8 +446,7 @@ class AuthDatabase {
     }
   }
 
-  Future<List<Map<String, dynamic>>> getMessagesBetween(
-      String userId1, String userId2) async {
+  Future<List<Map<String, dynamic>>> getMessagesBetween(String userId1, String userId2) async {
     try {
       if (kIsWeb) {
         final finder = sembast.Finder(
@@ -486,8 +461,7 @@ class AuthDatabase {
             ]),
           ]),
         );
-        final records =
-            await _messageStore.find(await database, finder: finder);
+        final records = await _messageStore.find(await database, finder: finder);
         return records.map((r) {
           final messageData = Map<String, dynamic>.from(r.value);
           messageData['id'] = r.key;
@@ -496,8 +470,7 @@ class AuthDatabase {
       } else {
         final result = await (await database).query(
           'messages',
-          where:
-              '(sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?)',
+          where: '(sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?)',
           whereArgs: [userId1, userId2, userId2, userId1],
           orderBy: 'created_at ASC',
         );
@@ -512,8 +485,7 @@ class AuthDatabase {
     }
   }
 
-  Future<List<Map<String, dynamic>>> getConversationsForUser(
-      String userId) async {
+  Future<List<Map<String, dynamic>>> getConversationsForUser(String userId) async {
     try {
       if (kIsWeb) {
         final finder = sembast.Finder(
@@ -522,8 +494,7 @@ class AuthDatabase {
             return participants?.contains(userId) ?? false;
           }),
         );
-        final records =
-            await _conversationStore.find(await database, finder: finder);
+        final records = await _conversationStore.find(await database, finder: finder);
         return records.map((r) {
           final convoData = Map<String, dynamic>.from(r.value);
           convoData['id'] = r.key;
@@ -533,8 +504,7 @@ class AuthDatabase {
         final result = await (await database).query('conversations');
         return result
             .map((row) {
-              final convo =
-                  jsonDecode(row['data'] as String) as Map<String, dynamic>;
+              final convo = jsonDecode(row['data'] as String) as Map<String, dynamic>;
               final participants = convo['participants'] as List<dynamic>;
               if (participants.contains(userId)) {
                 convo['id'] = row['id'].toString();
@@ -557,8 +527,7 @@ class AuthDatabase {
         await _messageStore.record(messageId).delete(await database);
         return 1;
       } else {
-        return await (await database)
-            .delete('messages', where: 'id = ?', whereArgs: [messageId]);
+        return await (await database).delete('messages', where: 'id = ?', whereArgs: [messageId]);
       }
     } catch (e) {
       throw Exception('Failed to delete message: $e');
@@ -572,9 +541,7 @@ class AuthDatabase {
     try {
       final messageId = messageData['id'].toString();
       if (kIsWeb) {
-        await _messageStore
-            .record(messageId)
-            .update(await database, messageData);
+        await _messageStore.record(messageId).update(await database, messageData);
       } else {
         await (await database).update(
           'messages',
@@ -619,15 +586,12 @@ class AuthDatabase {
       } else {
         final result = await (await database).query('conversations');
         final idsToDelete = result
-            .map((row) =>
-                jsonDecode(row['data'] as String) as Map<String, dynamic>)
-            .where((convo) =>
-                (convo['participants'] as List<dynamic>).contains(userId))
+            .map((row) => jsonDecode(row['data'] as String) as Map<String, dynamic>)
+            .where((convo) => (convo['participants'] as List<dynamic>).contains(userId))
             .map((convo) => convo['id'])
             .toList();
         for (final id in idsToDelete) {
-          await (await database)
-              .delete('conversations', where: 'id = ?', whereArgs: [id]);
+          await (await database).delete('conversations', where: 'id = ?', whereArgs: [id]);
         }
       }
     } catch (e) {
@@ -648,31 +612,209 @@ class AuthDatabase {
   }
 
   Future<String> createUser(Map<String, dynamic> user) async {
-    return await _users.createUser(user);
+    try {
+      final userData = {
+        'id': user['id']?.toString() ?? DateTime.now().millisecondsSinceEpoch.toString(),
+        'username': user['username']?.toString() ?? '',
+        'email': user['email']?.toString() ?? '',
+        'bio': user['bio']?.toString() ?? '',
+        'password': user['password']?.toString() ?? '',
+        'auth_provider': user['auth_provider']?.toString() ?? 'email',
+        'token': user['token']?.toString(),
+        'created_at': user['created_at']?.toString() ?? DateTime.now().toIso8601String(),
+        'updated_at': user['updated_at']?.toString() ?? DateTime.now().toIso8601String(),
+      };
+
+      // Define valid columns based on the users table schema
+      final definedColumns = [
+        'id',
+        'username',
+        'email',
+        'bio',
+        'password',
+        'auth_provider',
+        'token',
+        'created_at',
+        'updated_at',
+      ];
+      final filteredUserData = Map.fromEntries(
+        userData.entries.where((entry) => definedColumns.contains(entry.key)),
+      );
+
+      if (kIsWeb) {
+        final id = await _userStore.add(await database, filteredUserData);
+        await _firestore.collection('users').doc(id).set(filteredUserData);
+        return id;
+      } else {
+        await (await database).insert(
+          'users',
+          filteredUserData,
+          conflictAlgorithm: sqflite.ConflictAlgorithm.replace,
+        );
+        await _firestore.collection('users').doc(filteredUserData['id']).set(filteredUserData);
+        return filteredUserData['id']!;
+      }
+    } catch (e) {
+      throw Exception('Failed to create user: $e');
+    }
   }
 
   Future<Map<String, dynamic>?> getUserByEmail(String email) async {
-    return await _users.getUserByEmail(email);
+    try {
+      final firestoreResult = await _firestore
+          .collection('users')
+          .where('email', isEqualTo: email)
+          .limit(1)
+          .get();
+      if (firestoreResult.docs.isNotEmpty) {
+        return firestoreResult.docs.first.data();
+      }
+
+      if (kIsWeb) {
+        final finder = sembast.Finder(filter: sembast.Filter.equals('email', email));
+        final record = await _userStore.findFirst(await database, finder: finder);
+        return record?.value;
+      } else {
+        final result = await (await database).query(
+          'users',
+          where: 'email = ?',
+          whereArgs: [email],
+        );
+        return result.isNotEmpty ? Map<String, dynamic>.from(result.first) : null;
+      }
+    } catch (e) {
+      throw Exception('Failed to get user by email: $e');
+    }
   }
 
   Future<Map<String, dynamic>?> getUserById(String id) async {
-    return await _users.getUserById(id);
+    try {
+      final firestoreDoc = await _firestore.collection('users').doc(id).get();
+      if (firestoreDoc.exists) {
+        return firestoreDoc.data();
+      }
+
+      if (kIsWeb) {
+        final record = await _userStore.record(id).get(await database);
+        return record;
+      } else {
+        final result = await (await database).query(
+          'users',
+          where: 'id = ?',
+          whereArgs: [id],
+        );
+        return result.isNotEmpty ? Map<String, dynamic>.from(result.first) : null;
+      }
+    } catch (e) {
+      throw Exception('Failed to get user by ID: $e');
+    }
   }
 
   Future<String> updateUser(Map<String, dynamic> user) async {
-    return await _users.updateUser(user);
+    try {
+      final userData = Map<String, dynamic>.from(user);
+      userData['updated_at'] = DateTime.now().toIso8601String();
+      final userId = userData['id'].toString();
+
+      final definedColumns = [
+        'id',
+        'username',
+        'email',
+        'bio',
+        'password',
+        'auth_provider',
+        'token',
+        'created_at',
+        'updated_at',
+      ];
+      final filteredUserData = Map.fromEntries(
+        userData.entries.where((entry) => definedColumns.contains(entry.key)),
+      );
+
+      await _firestore.collection('users').doc(userId).update(filteredUserData);
+      if (kIsWeb) {
+        await _userStore.record(userId).update(await database, filteredUserData);
+      } else {
+        await (await database).update(
+          'users',
+          filteredUserData,
+          where: 'id = ?',
+          whereArgs: [userId],
+        );
+      }
+      return userId;
+    } catch (e) {
+      throw Exception('Failed to update user: $e');
+    }
   }
 
   Future<List<Map<String, dynamic>>> getUsers() async {
-    return await _users.getAllUsers();
+    try {
+      await _firestore.collection('users').get(); // Fetch but don't use Firestore data
+
+      if (kIsWeb) {
+        final records = await _userStore.find(await database);
+        return records.map((r) => Map<String, dynamic>.from(r.value)).toList();
+      } else {
+        final result = await (await database).query('users');
+        return result.map((r) => Map<String, dynamic>.from(r)).toList();
+      }
+    } catch (e) {
+      throw Exception('Failed to get all users: $e');
+    }
   }
 
   Future<List<Map<String, dynamic>>> searchUsers(String query) async {
-    return await _users.searchUsers(query);
+    try {
+      await _firestore
+          .collection('users')
+          .where('username', isGreaterThanOrEqualTo: query)
+          .where('username', isLessThanOrEqualTo: '$query\uf8ff')
+          .get(); // Fetch but don't use Firestore data
+
+      if (kIsWeb) {
+        final finder = sembast.Finder(filter: sembast.Filter.matches('username', '^$query.*'));
+        final records = await _userStore.find(await database, finder: finder);
+        return records.map((r) => Map<String, dynamic>.from(r.value)).toList();
+      } else {
+        final result = await (await database).query(
+          'users',
+          where: 'username LIKE ?',
+          whereArgs: ['$query%'],
+        );
+        return result.map((r) => Map<String, dynamic>.from(r)).toList();
+      }
+    } catch (e) {
+      throw Exception('Failed to search users: $e');
+    }
   }
 
   Future<Map<String, dynamic>?> getUserByToken(String token) async {
-    return await _users.getUserByToken(token);
+    try {
+      final firestoreResult = await _firestore
+          .collection('users')
+          .where('token', isEqualTo: token)
+          .limit(1)
+          .get();
+      if (firestoreResult.docs.isNotEmpty) {
+        return firestoreResult.docs.first.data();
+      }
+
+      if (kIsWeb) {
+        final finder = sembast.Finder(filter: sembast.Filter.equals('token', token));
+        final record = await _userStore.findFirst(await database, finder: finder);
+        return record?.value;
+      } else {
+        final result = await (await database).query(
+          'users',
+          where: 'token = ?',
+          whereArgs: [token],
+        );
+        return result.isNotEmpty ? Map<String, dynamic>.from(result.first) : null;
+      }
+    } catch (e) {
+      throw Exception('Failed to get user by token: $e');
+    }
   }
 }
 
