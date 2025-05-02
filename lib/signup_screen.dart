@@ -8,9 +8,10 @@ import 'package:movie_app/signin_screen.dart';
 import 'package:movie_app/user_manager.dart';
 import 'package:movie_app/session_manager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:ui';
 
 class SignUpScreen extends StatefulWidget {
-  const SignUpScreen({Key? key}) : super(key: key);
+  const SignUpScreen({super.key});
 
   @override
   SignUpScreenState createState() => SignUpScreenState();
@@ -32,7 +33,6 @@ class SignUpScreenState extends State<SignUpScreen> {
   @override
   void initState() {
     super.initState();
-    // Enable Firestore offline persistence
     _firestore.settings = const Settings(
       persistenceEnabled: true,
       cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
@@ -51,7 +51,6 @@ class SignUpScreenState extends State<SignUpScreen> {
   Future<void> _storeSession(String userId, String token) async {
     try {
       final expirationDate = DateTime.now().add(const Duration(days: 5));
-      // Save to Firestore (will queue offline)
       await _firestore.collection('sessions').doc(userId).set({
         'userId': userId,
         'token': token,
@@ -59,21 +58,18 @@ class SignUpScreenState extends State<SignUpScreen> {
         'createdAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
 
-      // Save session locally for offline use
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('session_user_id', userId);
       await prefs.setString('session_token', token);
-      await prefs.setInt(
-          'session_expires_at', expirationDate.millisecondsSinceEpoch);
-      debugPrint('✅ Session created and saved locally for user: $userId');
+      await prefs.setInt('session_expires_at', expirationDate.millisecondsSinceEpoch);
+      debugPrint('✅ Session saved for user: $userId');
     } catch (e) {
       debugPrint('❌ Error storing session: $e');
       throw e;
     }
   }
 
-  Future<void> _saveUserOffline(
-      String userId, Map<String, dynamic> userData) async {
+  Future<void> _saveUserOffline(String userId, Map<String, dynamic> userData) async {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('user_$userId', userData.toString());
@@ -93,7 +89,6 @@ class SignUpScreenState extends State<SignUpScreen> {
       final password = _passwordController.text;
       final username = _usernameController.text.trim();
 
-      // Firebase sign-up
       final userCred = await _firebaseAuth.createUserWithEmailAndPassword(
         email: email,
         password: password,
@@ -102,7 +97,6 @@ class SignUpScreenState extends State<SignUpScreen> {
 
       final user = userCred.user;
       if (user != null) {
-        // Prepare user data
         final userData = {
           'id': user.uid,
           'username': username,
@@ -110,34 +104,27 @@ class SignUpScreenState extends State<SignUpScreen> {
           'status': 'Online',
           'auth_provider': 'firebase',
           'created_at': FieldValue.serverTimestamp(),
+          'updated_at': FieldValue.serverTimestamp(),
         };
 
-        // Save to Firestore (will queue offline)
-        await _firestore.collection('users').doc(user.uid).set(
-              userData,
-              SetOptions(merge: true),
-            );
+        final userDoc = await _firestore.collection('users').doc(user.uid).get();
+        if (!userDoc.exists) {
+          await _firestore.collection('users').doc(user.uid).set(userData, SetOptions(merge: true));
+        }
 
-        // Save to local database
         await AuthDatabase.instance.createUser({
           'id': user.uid,
           'username': username,
           'email': email,
           'password': password,
           'auth_provider': 'firebase',
+          'created_at': DateTime.now().toIso8601String(),
+          'updated_at': DateTime.now().toIso8601String(),
         });
 
-        // Save user data offline
         await _saveUserOffline(user.uid, userData);
+        UserManager.instance.updateUser(userData);
 
-        // Update UserManager
-        UserManager.instance.updateUser({
-          'id': user.uid,
-          'username': username,
-          'email': email,
-        });
-
-        // Create and save session
         final token = await user.getIdToken();
         if (token != null) {
           await SessionManager.saveAuthToken(token);
@@ -192,7 +179,6 @@ class SignUpScreenState extends State<SignUpScreen> {
       if (!mounted) return;
 
       if (user != null) {
-        // Prepare user data
         final userData = {
           'id': user.uid,
           'username': user.displayName ?? 'GoogleUser',
@@ -200,27 +186,25 @@ class SignUpScreenState extends State<SignUpScreen> {
           'status': 'Online',
           'auth_provider': 'google',
           'created_at': FieldValue.serverTimestamp(),
+          'updated_at': FieldValue.serverTimestamp(),
         };
 
-        // Save to Firestore (will queue offline)
-        await _firestore.collection('users').doc(user.uid).set(
-              userData,
-              SetOptions(merge: true),
-            );
+        final userDoc = await _firestore.collection('users').doc(user.uid).get();
+        if (!userDoc.exists) {
+          await _firestore.collection('users').doc(user.uid).set(userData, SetOptions(merge: true));
+        }
 
-        // Save to local database
         await AuthDatabase.instance.createUser({
           'id': user.uid,
           'username': user.displayName ?? 'GoogleUser',
           'email': user.email ?? '',
           'password': '',
           'auth_provider': 'google',
+          'created_at': DateTime.now().toIso8601String(),
+          'updated_at': DateTime.now().toIso8601String(),
         });
 
-        // Save user data offline
         await _saveUserOffline(user.uid, userData);
-
-        // Update UserManager
         UserManager.instance.updateUser({
           'id': user.uid,
           'username': user.displayName ?? 'GoogleUser',
@@ -228,7 +212,6 @@ class SignUpScreenState extends State<SignUpScreen> {
           'photoURL': user.photoURL,
         });
 
-        // Create and save session
         final token = await user.getIdToken();
         if (token != null) {
           await SessionManager.saveAuthToken(token);
@@ -271,8 +254,11 @@ class SignUpScreenState extends State<SignUpScreen> {
         children: [
           Container(
             decoration: const BoxDecoration(
-              gradient:
-                  LinearGradient(colors: [Colors.deepPurple, Colors.black]),
+              gradient: LinearGradient(
+                colors: [Colors.deepPurple, Colors.black],
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+              ),
             ),
           ),
           Center(
@@ -281,156 +267,153 @@ class SignUpScreenState extends State<SignUpScreen> {
                 padding: const EdgeInsets.symmetric(horizontal: 24),
                 child: _isProcessing
                     ? const Center(child: CircularProgressIndicator())
-                    : Card(
-                        color: Colors.black.withAlpha((0.7 * 255).round()),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        elevation: 6,
-                        child: Padding(
-                          padding: const EdgeInsets.all(24.0),
-                          child: Form(
-                            key: _formKey,
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                const Text(
-                                  "Create Account",
-                                  style: TextStyle(
-                                    fontSize: 24,
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                                const SizedBox(height: 16),
-                                TextFormField(
-                                  controller: _usernameController,
-                                  style: const TextStyle(color: Colors.white),
-                                  decoration: InputDecoration(
-                                    labelText: "Username",
-                                    labelStyle:
-                                        const TextStyle(color: Colors.white70),
-                                    filled: true,
-                                    fillColor: Colors.white
-                                        .withAlpha((0.1 * 255).round()),
-                                    border: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(8),
-                                      borderSide: BorderSide.none,
+                    : ClipRRect(
+                        borderRadius: BorderRadius.circular(16),
+                        child: BackdropFilter(
+                          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: Colors.black.withAlpha((0.7 * 255).round()),
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(color: Colors.white.withOpacity(0.2)),
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsets.all(24.0),
+                              child: Form(
+                                key: _formKey,
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const Text(
+                                      "Create Account",
+                                      style: TextStyle(
+                                        fontSize: 24,
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.bold,
+                                      ),
                                     ),
-                                  ),
-                                  validator: (v) => v == null || v.isEmpty
-                                      ? 'Enter username'
-                                      : null,
-                                ),
-                                const SizedBox(height: 16),
-                                TextFormField(
-                                  controller: _emailController,
-                                  style: const TextStyle(color: Colors.white),
-                                  decoration: InputDecoration(
-                                    labelText: "Email",
-                                    labelStyle:
-                                        const TextStyle(color: Colors.white70),
-                                    filled: true,
-                                    fillColor: Colors.white
-                                        .withAlpha((0.1 * 255).round()),
-                                    border: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(8),
-                                      borderSide: BorderSide.none,
+                                    const SizedBox(height: 16),
+                                    TextFormField(
+                                      controller: _usernameController,
+                                      style: const TextStyle(color: Colors.white),
+                                      decoration: InputDecoration(
+                                        labelText: "Username",
+                                        labelStyle: const TextStyle(color: Colors.white70),
+                                        filled: true,
+                                        fillColor: Colors.white.withAlpha((0.1 * 255).round()),
+                                        border: OutlineInputBorder(
+                                          borderRadius: BorderRadius.circular(8),
+                                          borderSide: BorderSide.none,
+                                        ),
+                                      ),
+                                      validator: (v) => v == null || v.isEmpty ? 'Enter username' : null,
                                     ),
-                                  ),
-                                  keyboardType: TextInputType.emailAddress,
-                                  validator: (v) => v == null ||
-                                          !RegExp(r'^[^@]+@[^@]+\.[^@]+')
-                                              .hasMatch(v)
-                                      ? 'Enter valid email'
-                                      : null,
-                                ),
-                                const SizedBox(height: 16),
-                                TextFormField(
-                                  controller: _passwordController,
-                                  style: const TextStyle(color: Colors.white),
-                                  decoration: InputDecoration(
-                                    labelText: "Password",
-                                    labelStyle:
-                                        const TextStyle(color: Colors.white70),
-                                    filled: true,
-                                    fillColor: Colors.white
-                                        .withAlpha((0.1 * 255).round()),
-                                    border: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(8),
-                                      borderSide: BorderSide.none,
+                                    const SizedBox(height: 16),
+                                    TextFormField(
+                                      controller: _emailController,
+                                      style: const TextStyle(color: Colors.white),
+                                      decoration: InputDecoration(
+                                        labelText: "Email",
+                                        labelStyle: const TextStyle(color: Colors.white70),
+                                        filled: true,
+                                        fillColor: Colors.white.withAlpha((0.1 * 255).round()),
+                                        border: OutlineInputBorder(
+                                          borderRadius: BorderRadius.circular(8),
+                                          borderSide: BorderSide.none,
+                                        ),
+                                      ),
+                                      keyboardType: TextInputType.emailAddress,
+                                      validator: (v) => v == null || !RegExp(r'^[^@]+@[^@]+\.[^@]+').hasMatch(v)
+                                          ? 'Enter valid email'
+                                          : null,
                                     ),
-                                  ),
-                                  obscureText: true,
-                                  validator: (v) => v == null || v.length < 6
-                                      ? 'Min 6 chars'
-                                      : null,
-                                ),
-                                const SizedBox(height: 16),
-                                TextFormField(
-                                  controller: _confirmPasswordController,
-                                  style: const TextStyle(color: Colors.white),
-                                  decoration: InputDecoration(
-                                    labelText: "Confirm Password",
-                                    labelStyle:
-                                        const TextStyle(color: Colors.white70),
-                                    filled: true,
-                                    fillColor: Colors.white
-                                        .withAlpha((0.1 * 255).round()),
-                                    border: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(8),
-                                      borderSide: BorderSide.none,
+                                    const SizedBox(height: 16),
+                                    TextFormField(
+                                      controller: _passwordController,
+                                      style: const TextStyle(color: Colors.white),
+                                      decoration: InputDecoration(
+                                        labelText: "Password",
+                                        labelStyle: const TextStyle(color: Colors.white70),
+                                        filled: true,
+                                        fillColor: Colors.white.withAlpha((0.1 * 255).round()),
+                                        border: OutlineInputBorder(
+                                          borderRadius: BorderRadius.circular(8),
+                                          borderSide: BorderSide.none,
+                                        ),
+                                      ),
+                                      obscureText: true,
+                                      validator: (v) => v == null || v.length < 6 ? 'Min 6 chars' : null,
                                     ),
-                                  ),
-                                  obscureText: true,
-                                  validator: (v) =>
-                                      v == _passwordController.text
-                                          ? null
-                                          : 'Passwords must match',
-                                ),
-                                const SizedBox(height: 24),
-                                ElevatedButton(
-                                  onPressed: _signUpEmail,
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: Colors.blueAccent,
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 40, vertical: 16),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(8),
+                                    const SizedBox(height: 16),
+                                    TextFormField(
+                                      controller: _confirmPasswordController,
+                                      style: const TextStyle(color: Colors.white),
+                                      decoration: InputDecoration(
+                                        labelText: "Confirm Password",
+                                        labelStyle: const TextStyle(color: Colors.white70),
+                                        filled: true,
+                                        fillColor: Colors.white.withAlpha((0.1 * 255).round()),
+                                        border: OutlineInputBorder(
+                                          borderRadius: BorderRadius.circular(8),
+                                          borderSide: BorderSide.none,
+                                        ),
+                                      ),
+                                      obscureText: true,
+                                      validator: (v) => v == _passwordController.text ? null : 'Passwords must match',
                                     ),
-                                  ),
-                                  child: const Text('Sign Up'),
+                                    const SizedBox(height: 24),
+                                    ElevatedButton(
+                                      onPressed: _signUpEmail,
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: Colors.blueAccent,
+                                        padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 16),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(8),
+                                        ),
+                                      ),
+                                      child: const Text(
+                                        'Sign Up',
+                                        style: TextStyle(fontSize: 16),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 16),
+                                    ElevatedButton.icon(
+                                      onPressed: _signUpWithGoogle,
+                                      icon: Image.asset(
+                                        'assets/googlelogo1.png',
+                                        height: 24,
+                                        width: 24,
+                                      ),
+                                      label: const Text(
+                                        'Sign Up with Google',
+                                        style: TextStyle(fontSize: 16),
+                                      ),
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: Colors.white,
+                                        foregroundColor: Colors.black87,
+                                        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(8),
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 16),
+                                    TextButton(
+                                      onPressed: () {
+                                        if (!mounted) return;
+                                        Navigator.pushReplacement(
+                                          context,
+                                          MaterialPageRoute(builder: (_) => const SignInScreen()),
+                                        );
+                                      },
+                                      child: const Text(
+                                        'Already have an account? Sign In',
+                                        style: TextStyle(color: Colors.white70),
+                                      ),
+                                    ),
+                                  ],
                                 ),
-                                const SizedBox(height: 16),
-                                ElevatedButton.icon(
-                                  onPressed: _signUpWithGoogle,
-                                  icon: Image.asset(
-                                    'assets/googlelogo1.png',
-                                    height: 24,
-                                    width: 24,
-                                  ),
-                                  label: const Text('Sign Up with Google'),
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: Colors.white,
-                                    foregroundColor: Colors.black87,
-                                  ),
-                                ),
-                                const SizedBox(height: 16),
-                                TextButton(
-                                  onPressed: () {
-                                    if (!mounted) return;
-                                    Navigator.pushReplacement(
-                                      context,
-                                      MaterialPageRoute(
-                                          builder: (_) => const SignInScreen()),
-                                    );
-                                  },
-                                  child: const Text(
-                                    'Already have an account? Sign In',
-                                    style: TextStyle(color: Colors.white70),
-                                  ),
-                                ),
-                              ],
+                              ),
                             ),
                           ),
                         ),
