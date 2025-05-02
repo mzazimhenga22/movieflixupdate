@@ -7,6 +7,7 @@ buildscript {
     dependencies {
         // Firebase Gradle Plugin
         classpath("com.google.gms:google-services:4.4.2") // Fixed syntax: use parentheses
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.1.20")
     }
 }
 
