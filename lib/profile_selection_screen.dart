@@ -6,25 +6,26 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'database/auth_database.dart';
 import 'package:movie_app/home_screen_main.dart';
+import 'package:movie_app/signin_screen.dart';
 import 'user_manager.dart';
 import 'session_manager.dart';
 import 'dart:ui';
 
 class AnimatedBorder extends StatefulWidget {
-  final Widget child;
-  final List<Color> colors;
-  final double borderWidth;
-  final Duration duration;
-  final BorderRadius borderRadius;
-
   const AnimatedBorder({
-    Key? key,
+    super.key,
     required this.child,
     required this.colors,
     this.borderWidth = 4,
     this.duration = const Duration(seconds: 2),
     this.borderRadius = const BorderRadius.all(Radius.circular(12)),
-  }) : super(key: key);
+  });
+
+  final Widget child;
+  final List<Color> colors;
+  final double borderWidth;
+  final Duration duration;
+  final BorderRadius borderRadius;
 
   @override
   State<AnimatedBorder> createState() => _AnimatedBorderState();
@@ -76,14 +77,14 @@ class _AnimatedBorderState extends State<AnimatedBorder>
 }
 
 class AnimatedBorderBox extends StatelessWidget {
-  final int index;
-  final Widget child;
-
   const AnimatedBorderBox({
-    Key? key,
+    super.key,
     required this.index,
     required this.child,
-  }) : super(key: key);
+  });
+
+  final int index;
+  final Widget child;
 
   @override
   Widget build(BuildContext context) {
@@ -98,7 +99,7 @@ class AnimatedBorderBox extends StatelessWidget {
 }
 
 class ProfileSelectionScreen extends StatefulWidget {
-  const ProfileSelectionScreen({Key? key}) : super(key: key);
+  const ProfileSelectionScreen({super.key});
 
   @override
   State<ProfileSelectionScreen> createState() => _ProfileSelectionScreenState();
@@ -144,11 +145,15 @@ class _ProfileSelectionScreenState extends State<ProfileSelectionScreen> {
   }
 
   Future<void> _loadCurrentUserAndProfiles() async {
+    final context = this.context;
     try {
       User? user = _auth.currentUser;
       if (user == null) {
         debugPrint('ℹ️ No user signed in');
-        Navigator.pushReplacementNamed(context, '/signin');
+        if (mounted) {
+          Navigator.pushReplacement(
+              context, MaterialPageRoute(builder: (_) => const SignInScreen()));
+        }
         return;
       }
 
@@ -164,14 +169,17 @@ class _ProfileSelectionScreenState extends State<ProfileSelectionScreen> {
             'token': token,
             'expiresAt':
                 Timestamp.fromDate(DateTime.now().add(Duration(days: 5))),
-            'createdAt': Timestamp.now(),
-          });
+            'createdAt': FieldValue.serverTimestamp(),
+          }, SetOptions(merge: true));
           await SessionManager.saveAuthToken(token);
           await SessionManager.saveSessionUserId(user.uid);
           debugPrint('✅ Created new session for user: ${user.uid}');
         } else {
           debugPrint('❌ Failed to get ID token');
-          Navigator.pushReplacementNamed(context, '/signin');
+          if (mounted) {
+            Navigator.pushReplacement(context,
+                MaterialPageRoute(builder: (_) => const SignInScreen()));
+          }
           return;
         }
       } else {
@@ -181,31 +189,25 @@ class _ProfileSelectionScreenState extends State<ProfileSelectionScreen> {
         if (expiresAt == null || DateTime.now().isAfter(expiresAt.toDate())) {
           debugPrint('❌ Session expired or invalid');
           await SessionManager.clearAuthToken();
-          Navigator.pushReplacementNamed(context, '/signin');
+          if (mounted) {
+            Navigator.pushReplacement(context,
+                MaterialPageRoute(builder: (_) => const SignInScreen()));
+          }
           return;
         }
         debugPrint('✅ Valid session found');
       }
 
-      final userData = {
-        'id': user.uid,
-        'email': user.email ?? '',
-        'username': user.displayName ?? 'User',
-        'auth_provider': 'firebase',
-        'token': await user.getIdToken(),
-        'created_at': DateTime.now().toIso8601String(),
-        'updated_at': DateTime.now().toIso8601String(),
-      };
-      await AuthDatabase.instance.createUser(userData);
-      UserManager.instance.updateUser(userData);
-
       await _refreshProfiles();
     } catch (e) {
       debugPrint('❌ Error in _loadCurrentUserAndProfiles: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error loading profiles: $e')),
-      );
-      Navigator.pushReplacementNamed(context, '/signin');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error loading profiles: $e')),
+        );
+        Navigator.pushReplacement(
+            context, MaterialPageRoute(builder: (_) => const SignInScreen()));
+      }
     }
   }
 
@@ -231,9 +233,11 @@ class _ProfileSelectionScreenState extends State<ProfileSelectionScreen> {
       _profilesController.add([]);
       _profiles = [];
       setState(() {});
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error refreshing profiles: $e')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error refreshing profiles: $e')),
+        );
+      }
     }
   }
 
@@ -251,6 +255,12 @@ class _ProfileSelectionScreenState extends State<ProfileSelectionScreen> {
     if (user == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("No user logged in.")),
+      );
+      return;
+    }
+    if (_profiles.length >= maxProfiles) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Maximum 5 profiles allowed.")),
       );
       return;
     }
@@ -290,8 +300,9 @@ class _ProfileSelectionScreenState extends State<ProfileSelectionScreen> {
           TextButton(
             child: const Text("Add"),
             onPressed: () async {
+              final scaffoldMessenger = ScaffoldMessenger.of(context);
               if (nameController.text.trim().isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(
+                scaffoldMessenger.showSnackBar(
                   const SnackBar(content: Text("Profile name is required.")),
                 );
                 return;
@@ -339,22 +350,19 @@ class _ProfileSelectionScreenState extends State<ProfileSelectionScreen> {
                     .doc(userId)
                     .collection('profiles')
                     .doc(newProfile['id'] as String)
-                    .set(newProfile);
-                if (!mounted) return;
+                    .set(newProfile, SetOptions(merge: true));
                 Navigator.pop(context);
                 await _refreshProfiles();
-                ScaffoldMessenger.of(context).showSnackBar(
+                scaffoldMessenger.showSnackBar(
                   SnackBar(
                       content:
                           Text("Profile '${newProfile['name']}' created.")),
                 );
               } catch (e) {
                 debugPrint('❌ Error creating profile: $e');
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Error creating profile: $e')),
-                  );
-                }
+                scaffoldMessenger.showSnackBar(
+                  SnackBar(content: Text('Error creating profile: $e')),
+                );
               }
             },
           ),
@@ -383,9 +391,10 @@ class _ProfileSelectionScreenState extends State<ProfileSelectionScreen> {
           TextButton(
             child: const Text("Update"),
             onPressed: () async {
+              final scaffoldMessenger = ScaffoldMessenger.of(context);
               final newUrl = _processUrl(avatarController.text.trim());
               if (newUrl.isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(
+                scaffoldMessenger.showSnackBar(
                   const SnackBar(content: Text("Avatar URL cannot be empty.")),
                 );
                 return;
@@ -404,19 +413,16 @@ class _ProfileSelectionScreenState extends State<ProfileSelectionScreen> {
                     .collection('profiles')
                     .doc(profile['id'] as String)
                     .update({'avatar': newUrl});
-                if (!mounted) return;
                 Navigator.pop(context);
                 await _refreshProfiles();
-                ScaffoldMessenger.of(context).showSnackBar(
+                scaffoldMessenger.showSnackBar(
                   const SnackBar(content: Text("Avatar updated.")),
                 );
               } catch (e) {
                 debugPrint('❌ Error updating avatar: $e');
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Error updating avatar: $e')),
-                  );
-                }
+                scaffoldMessenger.showSnackBar(
+                  SnackBar(content: Text('Error updating avatar: $e')),
+                );
               }
             },
           ),
@@ -446,6 +452,7 @@ class _ProfileSelectionScreenState extends State<ProfileSelectionScreen> {
     );
 
     if (confirm == true) {
+      final scaffoldMessenger = ScaffoldMessenger.of(context);
       final userId = profile['user_id'] as String;
       final profileId = profile['id'] as String;
       try {
@@ -456,18 +463,15 @@ class _ProfileSelectionScreenState extends State<ProfileSelectionScreen> {
             .collection('profiles')
             .doc(profileId)
             .delete();
-        if (!mounted) return;
         await _refreshProfiles();
-        ScaffoldMessenger.of(context).showSnackBar(
+        scaffoldMessenger.showSnackBar(
           SnackBar(content: Text("Profile '${profile['name']}' deleted.")),
         );
       } catch (e) {
         debugPrint('❌ Error deleting profile: $e');
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Error deleting profile: $e')),
-          );
-        }
+        scaffoldMessenger.showSnackBar(
+          SnackBar(content: Text('Error deleting profile: $e')),
+        );
       }
     }
   }
@@ -759,3 +763,4 @@ class _ProfileSelectionScreenState extends State<ProfileSelectionScreen> {
     );
   }
 }
+
