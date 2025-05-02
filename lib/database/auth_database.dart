@@ -23,10 +23,13 @@ class AuthDatabase {
 
   late final Users _users;
 
-  AuthDatabase._init() {
+  AuthDatabase._init();
+
+  Future<void> initialize() async {
+    final db = await database;
     _users = Users(
       firestore: _firestore,
-      database: _sqfliteDb,
+      database: kIsWeb ? null : db as sqflite.Database,
       dbFactory: kIsWeb ? databaseFactoryWeb : null,
       userStore: _userStore,
     );
@@ -37,88 +40,95 @@ class AuthDatabase {
       _sembastDb ??= await databaseFactoryWeb.openDatabase('auth.db');
       return _sembastDb!;
     } else {
-      if (_sqfliteDb == null) {
-        final dbPath = await sqflite.getDatabasesPath();
-        final path = join(dbPath, 'auth.db');
-        _sqfliteDb = await sqflite.openDatabase(
-          path,
-          version: 1, // Simplified to a single version
-          onConfigure: (db) async =>
-              await db.execute('PRAGMA foreign_keys = ON'),
-          onCreate: _createSQLiteDB,
-        );
-      }
+      _sqfliteDb ??= await _initializeSqflite();
       return _sqfliteDb!;
     }
   }
 
+  Future<sqflite.Database> _initializeSqflite() async {
+    final dbPath = await sqflite.getDatabasesPath();
+    final path = join(dbPath, 'auth.db');
+    return await sqflite.openDatabase(
+      path,
+      version: 1,
+      onConfigure: (db) async => await db.execute('PRAGMA foreign_keys = ON'),
+      onCreate: _createSQLiteDB,
+    );
+  }
+
   Future<void> _createSQLiteDB(sqflite.Database db, int version) async {
-    const idType = 'TEXT PRIMARY KEY';
-    const textType = 'TEXT NOT NULL';
+    try {
+      const idType = 'TEXT PRIMARY KEY';
+      const textType = 'TEXT NOT NULL';
 
-    await db.execute('''
-      CREATE TABLE users (
-        id $idType,
-        username $textType,
-        email $textType,
-        bio TEXT,
-        password $textType,
-        auth_provider $textType,
-        token TEXT,
-        created_at TEXT,
-        updated_at TEXT
-      )
-    ''');
+      await db.execute('''
+        CREATE TABLE users (
+          id $idType,
+          username $textType,
+          email $textType,
+          bio TEXT,
+          password $textType,
+          auth_provider $textType,
+          token TEXT,
+          created_at TEXT,
+          updated_at TEXT
+        )
+      ''');
 
-    await db.execute('''
-      CREATE TABLE profiles (
-        id $idType,
-        user_id TEXT NOT NULL,
-        name $textType,
-        avatar $textType,
-        backgroundImage TEXT,
-        pin TEXT,
-        locked INTEGER NOT NULL DEFAULT 0,
-        preferences TEXT DEFAULT '',
-        created_at TEXT,
-        updated_at TEXT,
-        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-      )
-    ''');
+      await db.execute('''
+        CREATE TABLE profiles (
+          id $idType,
+          user_id TEXT NOT NULL,
+          name $textType,
+          avatar $textType,
+          backgroundImage TEXT,
+          pin TEXT,
+          locked INTEGER NOT NULL DEFAULT 0,
+          preferences TEXT DEFAULT '',
+          created_at TEXT,
+          updated_at TEXT,
+          FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+      ''');
 
-    await db.execute('CREATE INDEX idx_profiles_user_id ON profiles(user_id)');
+      await db
+          .execute('CREATE INDEX idx_profiles_user_id ON profiles(user_id)');
 
-    await db.execute('''
-      CREATE TABLE messages (
-        id $idType,
-        sender_id TEXT NOT NULL,
-        receiver_id TEXT NOT NULL,
-        message $textType,
-        created_at TEXT,
-        is_read INTEGER NOT NULL DEFAULT 0,
-        is_pinned INTEGER NOT NULL DEFAULT 0,
-        replied_to TEXT,
-        FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE CASCADE,
-        FOREIGN KEY (receiver_id) REFERENCES users(id) ON DELETE CASCADE
-      )
-    ''');
+      await db.execute('''
+        CREATE TABLE messages (
+          id $idType,
+          sender_id TEXT NOT NULL,
+          receiver_id TEXT NOT NULL,
+          message $textType,
+          created_at TEXT,
+          is_read INTEGER NOT NULL DEFAULT 0,
+          is_pinned INTEGER NOT NULL DEFAULT 0,
+          replied_to TEXT,
+          FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE CASCADE,
+          FOREIGN KEY (receiver_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+      ''');
 
-    await db.execute('''
-      CREATE TABLE conversations (
-        id $idType,
-        data $textType
-      )
-    ''');
+      await db.execute('''
+        CREATE TABLE conversations (
+          id $idType,
+          data $textType
+        )
+      ''');
 
-    await db.execute('''
-      CREATE TABLE followers (
-        follower_id TEXT NOT NULL,
-        following_id TEXT NOT NULL,
-        PRIMARY KEY (follower_id, following_id),
-        FOREIGN KEY (follower_id) REFERENCES users(id) ON DELETE CASCADE,
-        FOREIGN KEY (following_id) REFERENCES users(id) ON DELETE CASCADE
-      )
-    ''');
+      await db.execute('''
+        CREATE TABLE followers (
+          follower_id TEXT NOT NULL,
+          following_id TEXT NOT NULL,
+          PRIMARY KEY (follower_id, following_id),
+          FOREIGN KEY (follower_id) REFERENCES users(id) ON DELETE CASCADE,
+          FOREIGN KEY (following_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+      ''');
+    } catch (e) {
+      print('Error creating SQLite tables: $e');
+      rethrow;
+    }
   }
 
   Future<bool> isFollowing(String followerId, String followingId) async {
@@ -637,7 +647,6 @@ class AuthDatabase {
     }
   }
 
-  // Delegate user-related methods to Users class
   Future<String> createUser(Map<String, dynamic> user) async {
     return await _users.createUser(user);
   }
@@ -666,3 +675,4 @@ class AuthDatabase {
     return await _users.getUserByToken(token);
   }
 }
+
