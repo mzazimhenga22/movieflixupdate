@@ -27,7 +27,6 @@ class SplashScreenState extends State<SplashScreen>
   void initState() {
     super.initState();
 
-    // Fade-in animation
     _controller = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 2),
@@ -38,14 +37,12 @@ class SplashScreenState extends State<SplashScreen>
     );
     _controller.forward();
 
-    // Check auth status after 3 seconds
     Future.delayed(const Duration(seconds: 3), _checkAuthStatus);
   }
 
   Future<void> _storeSession(String userId, String token) async {
     try {
       final expirationDate = DateTime.now().add(const Duration(days: 5));
-      // Save to Firestore (will queue offline)
       await _firestore.collection('sessions').doc(userId).set({
         'userId': userId,
         'token': token,
@@ -53,13 +50,12 @@ class SplashScreenState extends State<SplashScreen>
         'createdAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
 
-      // Save session locally
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('session_user_id', userId);
       await prefs.setString('session_token', token);
       await prefs.setInt(
           'session_expires_at', expirationDate.millisecondsSinceEpoch);
-      debugPrint('✅ Session created and saved locally for user: $userId');
+      debugPrint('✅ Session saved for user: $userId');
     } catch (e) {
       debugPrint('❌ Error storing session: $e');
       throw e;
@@ -85,11 +81,9 @@ class SplashScreenState extends State<SplashScreen>
     User? user;
 
     try {
-      // Check Firebase Authentication
       user = _auth.currentUser;
       if (user == null) {
         debugPrint('ℹ️ No user signed in');
-        // Clear any stale local session data
         await SessionManager.clearAuthToken();
         final prefs = await SharedPreferences.getInstance();
         await prefs.remove('session_user_id');
@@ -99,7 +93,6 @@ class SplashScreenState extends State<SplashScreen>
       } else {
         debugPrint('🔍 Checking session for user: ${user.uid}');
 
-        // Try Firestore session (online or cached)
         try {
           DocumentSnapshot sessionDoc =
               await _firestore.collection('sessions').doc(user.uid).get();
@@ -116,9 +109,9 @@ class SplashScreenState extends State<SplashScreen>
               debugPrint('❌ Firestore session expired or invalid');
               await _firestore.collection('sessions').doc(user.uid).delete();
             }
-          } else {
-            debugPrint('❌ No Firestore session found for user: ${user.uid}');
-            // Create a new session
+          }
+
+          if (!isLoggedIn) {
             final token = await user.getIdToken();
             if (token != null) {
               await _storeSession(user.uid, token);
@@ -129,12 +122,8 @@ class SplashScreenState extends State<SplashScreen>
               debugPrint('❌ Failed to obtain auth token');
             }
           }
-        } catch (e, stack) {
+        } catch (e) {
           debugPrint('❌ Error checking Firestore session (likely offline): $e');
-          debugPrint(stack.toString());
-
-          // Fallback to local session check
-          debugPrint('🔍 Falling back to local session check');
           final prefs = await SharedPreferences.getInstance();
           String? localUserId = prefs.getString('session_user_id');
           String? token = prefs.getString('session_token');
@@ -148,8 +137,6 @@ class SplashScreenState extends State<SplashScreen>
             debugPrint(
                 '⏱ Local session expires at: $expiry, loggedIn: $isLoggedIn');
           } else {
-            debugPrint('ℹ️ No valid local session');
-            // Create a new session if user is authenticated
             final token = await user.getIdToken();
             if (token != null) {
               await _storeSession(user.uid, token);
@@ -162,14 +149,26 @@ class SplashScreenState extends State<SplashScreen>
           }
         }
 
-        // Update UserManager with user data
         if (isLoggedIn) {
-          final userData = {
-            'id': user.uid,
-            'username': user.displayName ?? 'User',
-            'email': user.email ?? '',
-            'photoURL': user.photoURL,
-          };
+          final userDoc =
+              await _firestore.collection('users').doc(user.uid).get();
+          final userData = userDoc.exists
+              ? userDoc.data() as Map<String, dynamic>
+              : {
+                  'id': user.uid,
+                  'username': user.displayName ?? 'User',
+                  'email': user.email ?? '',
+                  'status': 'Online',
+                  'auth_provider': 'firebase',
+                  'created_at': FieldValue.serverTimestamp(),
+                  'updated_at': FieldValue.serverTimestamp(),
+                };
+          if (!userDoc.exists) {
+            await _firestore
+                .collection('users')
+                .doc(user.uid)
+                .set(userData, SetOptions(merge: true));
+          }
           UserManager.instance.updateUser(userData);
           await _saveUserOffline(user.uid, userData);
           debugPrint('✅ UserManager updated with user: ${user.uid}');
@@ -245,3 +244,4 @@ class SplashScreenState extends State<SplashScreen>
     );
   }
 }
+
