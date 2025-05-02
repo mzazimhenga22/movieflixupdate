@@ -16,7 +16,8 @@ class AuthDatabase {
   final _userStore = sembast.stringMapStoreFactory.store('users');
   final _profileStore = sembast.stringMapStoreFactory.store('profiles');
   final _messageStore = sembast.stringMapStoreFactory.store('messages');
-  final _conversationStore = sembast.stringMapStoreFactory.store('conversations');
+  final _conversationStore =
+      sembast.stringMapStoreFactory.store('conversations');
   final _followersStore = sembast.stringMapStoreFactory.store('followers');
 
   AuthDatabase._init();
@@ -81,7 +82,8 @@ class AuthDatabase {
         )
       ''');
 
-      await db.execute('CREATE INDEX idx_profiles_user_id ON profiles(user_id)');
+      await db
+          .execute('CREATE INDEX idx_profiles_user_id ON profiles(user_id)');
 
       await db.execute('''
         CREATE TABLE messages (
@@ -138,7 +140,8 @@ class AuthDatabase {
             sembast.Filter.equals('following_id', followingId),
           ]),
         );
-        final record = await _followersStore.findFirst(await database, finder: finder);
+        final record =
+            await _followersStore.findFirst(await database, finder: finder);
         return record != null;
       } else {
         final result = await (await database).query(
@@ -211,9 +214,12 @@ class AuthDatabase {
 
   Future<String> createProfile(Map<String, dynamic> profile) async {
     final profileData = {
-      'user_id': profile['user_id'].toString(),
+      'id': profile['id']?.toString() ??
+          DateTime.now().millisecondsSinceEpoch.toString(),
+      'user_id': profile['user_id']?.toString() ?? '',
       'name': profile['name']?.toString() ?? 'Profile',
-      'avatar': profile['avatar']?.toString() ?? 'https://via.placeholder.com/200',
+      'avatar':
+          profile['avatar']?.toString() ?? 'https://via.placeholder.com/200',
       'backgroundImage': profile['backgroundImage']?.toString(),
       'pin': profile['pin']?.toString(),
       'locked': profile['locked']?.toInt() ?? 0,
@@ -222,26 +228,32 @@ class AuthDatabase {
       'updated_at': DateTime.now().toIso8601String(),
     };
 
+    if (profileData['user_id'].isEmpty) {
+      throw Exception('user_id cannot be empty');
+    }
+
     try {
-      String newId;
+      debugPrint('Creating profile with data: $profileData');
+      final newId = profileData['id'];
       if (kIsWeb) {
-        newId = await _profileStore.add(await database, profileData);
+        await _profileStore.add(await database, profileData);
         await _firestore.collection('profiles').doc(newId).set(profileData);
       } else {
-        newId = DateTime.now().millisecondsSinceEpoch.toString();
-        profileData['id'] = newId;
         await (await database).insert('profiles', profileData,
             conflictAlgorithm: sqflite.ConflictAlgorithm.replace);
         await _firestore.collection('profiles').doc(newId).set(profileData);
       }
+      debugPrint('Profile created with ID: $newId');
       return newId;
     } catch (e) {
+      debugPrint('Failed to create profile: $e');
       throw Exception('Failed to create profile: $e');
     }
   }
 
   Future<List<Map<String, dynamic>>> getProfilesByUserId(String userId) async {
     try {
+      debugPrint('Fetching profiles for userId: $userId');
       final firestoreResult = await _firestore
           .collection('profiles')
           .where('user_id', isEqualTo: userId)
@@ -257,7 +269,8 @@ class AuthDatabase {
         final finder = sembast.Finder(
             filter: sembast.Filter.equals('user_id', userId),
             sortOrders: [sembast.SortOrder('created_at')]);
-        final records = await _profileStore.find(await database, finder: finder);
+        final records =
+            await _profileStore.find(await database, finder: finder);
         localProfiles = records.map((r) {
           final profileData = Map<String, dynamic>.from(r.value);
           profileData['id'] = r.key;
@@ -279,13 +292,13 @@ class AuthDatabase {
 
       final allProfilesMap = <String, Map<String, dynamic>>{};
       for (var profile in firestoreProfiles) {
-        final profileId = profile['id'].toString();
+        final profileId = profile['id']?.toString() ?? '';
         if (profileId.isNotEmpty) {
           allProfilesMap[profileId] = profile;
         }
       }
       for (var profile in localProfiles) {
-        final profileId = profile['id'].toString();
+        final profileId = profile['id']?.toString() ?? '';
         if (profileId.isNotEmpty) {
           allProfilesMap[profileId] = {
             ...allProfilesMap[profileId] ?? {},
@@ -294,15 +307,20 @@ class AuthDatabase {
         }
       }
 
-      return allProfilesMap.values.toList();
+      final profiles = allProfilesMap.values.toList();
+      debugPrint('Fetched ${profiles.length} profiles for userId: $userId');
+      return profiles;
     } catch (e) {
+      debugPrint('Failed to fetch profiles: $e');
       throw Exception('Failed to fetch profiles: $e');
     }
   }
 
   Future<Map<String, dynamic>?> getProfileById(String profileId) async {
     try {
-      final firestoreDoc = await _firestore.collection('profiles').doc(profileId).get();
+      debugPrint('Fetching profile with ID: $profileId');
+      final firestoreDoc =
+          await _firestore.collection('profiles').doc(profileId).get();
       if (firestoreDoc.exists) {
         final data = firestoreDoc.data()!;
         data['id'] = firestoreDoc.id;
@@ -310,7 +328,8 @@ class AuthDatabase {
       }
 
       if (kIsWeb) {
-        final record = await _profileStore.record(profileId).get(await database);
+        final record =
+            await _profileStore.record(profileId).get(await database);
         if (record != null) {
           final profileData = Map<String, dynamic>.from(record);
           profileData['id'] = profileId;
@@ -318,7 +337,8 @@ class AuthDatabase {
         }
         return null;
       } else {
-        final result = await (await database).query('profiles', where: 'id = ?', whereArgs: [profileId]);
+        final result = await (await database)
+            .query('profiles', where: 'id = ?', whereArgs: [profileId]);
         if (result.isNotEmpty) {
           final profileData = Map<String, dynamic>.from(result.first);
           profileData['id'] = profileData['id'].toString();
@@ -327,12 +347,14 @@ class AuthDatabase {
         return null;
       }
     } catch (e) {
+      debugPrint('Failed to fetch profile: $e');
       throw Exception('Failed to fetch profile: $e');
     }
   }
 
   Future<Map<String, dynamic>?> getActiveProfileByUserId(String userId) async {
     try {
+      debugPrint('Fetching active profile for userId: $userId');
       final firestoreResult = await _firestore
           .collection('profiles')
           .where('user_id', isEqualTo: userId)
@@ -354,7 +376,8 @@ class AuthDatabase {
           ]),
           sortOrders: [sembast.SortOrder('created_at')],
         );
-        final record = await _profileStore.findFirst(await database, finder: finder);
+        final record =
+            await _profileStore.findFirst(await database, finder: finder);
         if (record != null) {
           final profileData = Map<String, dynamic>.from(record.value);
           profileData['id'] = record.key;
@@ -377,20 +400,34 @@ class AuthDatabase {
         return null;
       }
     } catch (e) {
+      debugPrint('Failed to fetch active profile: $e');
       throw Exception('Failed to fetch active profile: $e');
     }
   }
 
   Future<String> updateProfile(Map<String, dynamic> profile) async {
     final profileData = Map<String, dynamic>.from(profile);
-    profileData['user_id'] = profileData['user_id'].toString();
+    profileData['user_id'] = profileData['user_id']?.toString() ?? '';
     profileData['updated_at'] = DateTime.now().toIso8601String();
 
+    if (profileData['user_id'].isEmpty) {
+      throw Exception('user_id cannot be empty');
+    }
+
     try {
-      final profileId = profileData['id'].toString();
-      await _firestore.collection('profiles').doc(profileId).update(profileData);
+      final profileId = profileData['id']?.toString() ?? '';
+      if (profileId.isEmpty) {
+        throw Exception('profile id cannot be empty');
+      }
+      debugPrint('Updating profile with ID: $profileId');
+      await _firestore
+          .collection('profiles')
+          .doc(profileId)
+          .update(profileData);
       if (kIsWeb) {
-        await _profileStore.record(profileId).update(await database, profileData);
+        await _profileStore
+            .record(profileId)
+            .update(await database, profileData);
       } else {
         await (await database).update(
           'profiles',
@@ -401,28 +438,32 @@ class AuthDatabase {
       }
       return profileId;
     } catch (e) {
+      debugPrint('Failed to update profile: $e');
       throw Exception('Failed to update profile: $e');
     }
   }
 
   Future<int> deleteProfile(String profileId) async {
     try {
+      debugPrint('Deleting profile with ID: $profileId');
       await _firestore.collection('profiles').doc(profileId).delete();
       if (kIsWeb) {
         await _profileStore.record(profileId).delete(await database);
         return 1;
       } else {
-        return await (await database).delete('profiles', where: 'id = ?', whereArgs: [profileId]);
+        return await (await database)
+            .delete('profiles', where: 'id = ?', whereArgs: [profileId]);
       }
     } catch (e) {
+      debugPrint('Failed to delete profile: $e');
       throw Exception('Failed to delete profile: $e');
     }
   }
 
   Future<String> createMessage(Map<String, dynamic> message) async {
     final messageData = {
-      'sender_id': message['sender_id'].toString(),
-      'receiver_id': message['receiver_id'].toString(),
+      'sender_id': message['sender_id']?.toString() ?? '',
+      'receiver_id': message['receiver_id']?.toString() ?? '',
       'message': message['message']?.toString(),
       'created_at': DateTime.now().toIso8601String(),
       'is_read': message['is_read']?.toInt() ?? 0,
@@ -446,7 +487,8 @@ class AuthDatabase {
     }
   }
 
-  Future<List<Map<String, dynamic>>> getMessagesBetween(String userId1, String userId2) async {
+  Future<List<Map<String, dynamic>>> getMessagesBetween(
+      String userId1, String userId2) async {
     try {
       if (kIsWeb) {
         final finder = sembast.Finder(
@@ -461,7 +503,8 @@ class AuthDatabase {
             ]),
           ]),
         );
-        final records = await _messageStore.find(await database, finder: finder);
+        final records =
+            await _messageStore.find(await database, finder: finder);
         return records.map((r) {
           final messageData = Map<String, dynamic>.from(r.value);
           messageData['id'] = r.key;
@@ -470,7 +513,8 @@ class AuthDatabase {
       } else {
         final result = await (await database).query(
           'messages',
-          where: '(sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?)',
+          where:
+              '(sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?)',
           whereArgs: [userId1, userId2, userId2, userId1],
           orderBy: 'created_at ASC',
         );
@@ -485,7 +529,8 @@ class AuthDatabase {
     }
   }
 
-  Future<List<Map<String, dynamic>>> getConversationsForUser(String userId) async {
+  Future<List<Map<String, dynamic>>> getConversationsForUser(
+      String userId) async {
     try {
       if (kIsWeb) {
         final finder = sembast.Finder(
@@ -494,7 +539,8 @@ class AuthDatabase {
             return participants?.contains(userId) ?? false;
           }),
         );
-        final records = await _conversationStore.find(await database, finder: finder);
+        final records =
+            await _conversationStore.find(await database, finder: finder);
         return records.map((r) {
           final convoData = Map<String, dynamic>.from(r.value);
           convoData['id'] = r.key;
@@ -504,7 +550,7 @@ class AuthDatabase {
         final result = await (await database).query('conversations');
         return result
             .map((row) {
-              final convo = jsonDecode(row['data'] as String) as Map<String, dynamic>;
+              final convo = jsonDecode(row['data'] as String);
               final participants = convo['participants'] as List<dynamic>;
               if (participants.contains(userId)) {
                 convo['id'] = row['id'].toString();
@@ -527,7 +573,8 @@ class AuthDatabase {
         await _messageStore.record(messageId).delete(await database);
         return 1;
       } else {
-        return await (await database).delete('messages', where: 'id = ?', whereArgs: [messageId]);
+        return await (await database)
+            .delete('messages', where: 'id = ?', whereArgs: [messageId]);
       }
     } catch (e) {
       throw Exception('Failed to delete message: $e');
@@ -536,12 +583,17 @@ class AuthDatabase {
 
   Future<String> updateMessage(Map<String, dynamic> message) async {
     final messageData = Map<String, dynamic>.from(message);
-    messageData['sender_id'] = messageData['sender_id'].toString();
-    messageData['receiver_id'] = messageData['receiver_id'].toString();
+    messageData['sender_id'] = messageData['sender_id']?.toString() ?? '';
+    messageData['receiver_id'] = messageData['receiver_id']?.toString() ?? '';
     try {
-      final messageId = messageData['id'].toString();
+      final messageId = messageData['id']?.toString() ?? '';
+      if (messageId.isEmpty) {
+        throw Exception('message id cannot be empty');
+      }
       if (kIsWeb) {
-        await _messageStore.record(messageId).update(await database, messageData);
+        await _messageStore
+            .record(messageId)
+            .update(await database, messageData);
       } else {
         await (await database).update(
           'messages',
@@ -586,12 +638,14 @@ class AuthDatabase {
       } else {
         final result = await (await database).query('conversations');
         final idsToDelete = result
-            .map((row) => jsonDecode(row['data'] as String) as Map<String, dynamic>)
-            .where((convo) => (convo['participants'] as List<dynamic>).contains(userId))
+            .map((row) => jsonDecode(row['data'] as String))
+            .where((convo) =>
+                (convo['participants'] as List<dynamic>).contains(userId))
             .map((convo) => convo['id'])
             .toList();
         for (final id in idsToDelete) {
-          await (await database).delete('conversations', where: 'id = ?', whereArgs: [id]);
+          await (await database)
+              .delete('conversations', where: 'id = ?', whereArgs: [id]);
         }
       }
     } catch (e) {
@@ -614,18 +668,20 @@ class AuthDatabase {
   Future<String> createUser(Map<String, dynamic> user) async {
     try {
       final userData = {
-        'id': user['id']?.toString() ?? DateTime.now().millisecondsSinceEpoch.toString(),
+        'id': user['id']?.toString() ??
+            DateTime.now().millisecondsSinceEpoch.toString(),
         'username': user['username']?.toString() ?? '',
         'email': user['email']?.toString() ?? '',
         'bio': user['bio']?.toString() ?? '',
         'password': user['password']?.toString() ?? '',
         'auth_provider': user['auth_provider']?.toString() ?? 'email',
         'token': user['token']?.toString(),
-        'created_at': user['created_at']?.toString() ?? DateTime.now().toIso8601String(),
-        'updated_at': user['updated_at']?.toString() ?? DateTime.now().toIso8601String(),
+        'created_at':
+            user['created_at']?.toString() ?? DateTime.now().toIso8601String(),
+        'updated_at':
+            user['updated_at']?.toString() ?? DateTime.now().toIso8601String(),
       };
 
-      // Define valid columns based on the users table schema
       final definedColumns = [
         'id',
         'username',
@@ -641,20 +697,29 @@ class AuthDatabase {
         userData.entries.where((entry) => definedColumns.contains(entry.key)),
       );
 
+      final userId = filteredUserData['id'] as String?;
+      if (userId == null || userId.isEmpty) {
+        throw Exception('User ID cannot be empty');
+      }
+
+      debugPrint('Creating user with data: $filteredUserData');
       if (kIsWeb) {
-        final id = await _userStore.add(await database, filteredUserData);
-        await _firestore.collection('users').doc(id).set(filteredUserData);
-        return id;
+        await _userStore.add(await database, filteredUserData);
+        await _firestore.collection('users').doc(userId).set(filteredUserData);
+        debugPrint('User created with ID: $userId');
+        return userId;
       } else {
         await (await database).insert(
           'users',
           filteredUserData,
           conflictAlgorithm: sqflite.ConflictAlgorithm.replace,
         );
-        await _firestore.collection('users').doc(filteredUserData['id']).set(filteredUserData);
-        return filteredUserData['id']!;
+        await _firestore.collection('users').doc(userId).set(filteredUserData);
+        debugPrint('User created with ID: $userId');
+        return userId;
       }
     } catch (e) {
+      debugPrint('Failed to create user: $e');
       throw Exception('Failed to create user: $e');
     }
   }
@@ -671,8 +736,10 @@ class AuthDatabase {
       }
 
       if (kIsWeb) {
-        final finder = sembast.Finder(filter: sembast.Filter.equals('email', email));
-        final record = await _userStore.findFirst(await database, finder: finder);
+        final finder =
+            sembast.Finder(filter: sembast.Filter.equals('email', email));
+        final record =
+            await _userStore.findFirst(await database, finder: finder);
         return record?.value;
       } else {
         final result = await (await database).query(
@@ -680,9 +747,12 @@ class AuthDatabase {
           where: 'email = ?',
           whereArgs: [email],
         );
-        return result.isNotEmpty ? Map<String, dynamic>.from(result.first) : null;
+        return result.isNotEmpty
+            ? Map<String, dynamic>.from(result.first)
+            : null;
       }
     } catch (e) {
+      debugPrint('Failed to get user by email: $e');
       throw Exception('Failed to get user by email: $e');
     }
   }
@@ -703,9 +773,12 @@ class AuthDatabase {
           where: 'id = ?',
           whereArgs: [id],
         );
-        return result.isNotEmpty ? Map<String, dynamic>.from(result.first) : null;
+        return result.isNotEmpty
+            ? Map<String, dynamic>.from(result.first)
+            : null;
       }
     } catch (e) {
+      debugPrint('Failed to get user by ID: $e');
       throw Exception('Failed to get user by ID: $e');
     }
   }
@@ -714,7 +787,10 @@ class AuthDatabase {
     try {
       final userData = Map<String, dynamic>.from(user);
       userData['updated_at'] = DateTime.now().toIso8601String();
-      final userId = userData['id'].toString();
+      final userId = userData['id']?.toString() ?? '';
+      if (userId.isEmpty) {
+        throw Exception('User ID cannot be empty');
+      }
 
       final definedColumns = [
         'id',
@@ -731,9 +807,12 @@ class AuthDatabase {
         userData.entries.where((entry) => definedColumns.contains(entry.key)),
       );
 
+      debugPrint('Updating user with ID: $userId');
       await _firestore.collection('users').doc(userId).update(filteredUserData);
       if (kIsWeb) {
-        await _userStore.record(userId).update(await database, filteredUserData);
+        await _userStore
+            .record(userId)
+            .update(await database, filteredUserData);
       } else {
         await (await database).update(
           'users',
@@ -742,16 +821,17 @@ class AuthDatabase {
           whereArgs: [userId],
         );
       }
+      debugPrint('User updated: $userId');
       return userId;
     } catch (e) {
+      debugPrint('Failed to update user: $e');
       throw Exception('Failed to update user: $e');
     }
   }
 
   Future<List<Map<String, dynamic>>> getUsers() async {
     try {
-      await _firestore.collection('users').get(); // Fetch but don't use Firestore data
-
+      await _firestore.collection('users').get();
       if (kIsWeb) {
         final records = await _userStore.find(await database);
         return records.map((r) => Map<String, dynamic>.from(r.value)).toList();
@@ -760,6 +840,7 @@ class AuthDatabase {
         return result.map((r) => Map<String, dynamic>.from(r)).toList();
       }
     } catch (e) {
+      debugPrint('Failed to get all users: $e');
       throw Exception('Failed to get all users: $e');
     }
   }
@@ -770,10 +851,10 @@ class AuthDatabase {
           .collection('users')
           .where('username', isGreaterThanOrEqualTo: query)
           .where('username', isLessThanOrEqualTo: '$query\uf8ff')
-          .get(); // Fetch but don't use Firestore data
-
+          .get();
       if (kIsWeb) {
-        final finder = sembast.Finder(filter: sembast.Filter.matches('username', '^$query.*'));
+        final finder = sembast.Finder(
+            filter: sembast.Filter.matches('username', '^$query.*'));
         final records = await _userStore.find(await database, finder: finder);
         return records.map((r) => Map<String, dynamic>.from(r.value)).toList();
       } else {
@@ -785,6 +866,7 @@ class AuthDatabase {
         return result.map((r) => Map<String, dynamic>.from(r)).toList();
       }
     } catch (e) {
+      debugPrint('Failed to search users: $e');
       throw Exception('Failed to search users: $e');
     }
   }
@@ -801,8 +883,10 @@ class AuthDatabase {
       }
 
       if (kIsWeb) {
-        final finder = sembast.Finder(filter: sembast.Filter.equals('token', token));
-        final record = await _userStore.findFirst(await database, finder: finder);
+        final finder =
+            sembast.Finder(filter: sembast.Filter.equals('token', token));
+        final record =
+            await _userStore.findFirst(await database, finder: finder);
         return record?.value;
       } else {
         final result = await (await database).query(
@@ -810,11 +894,15 @@ class AuthDatabase {
           where: 'token = ?',
           whereArgs: [token],
         );
-        return result.isNotEmpty ? Map<String, dynamic>.from(result.first) : null;
+        return result.isNotEmpty
+            ? Map<String, dynamic>.from(result.first)
+            : null;
       }
     } catch (e) {
+      debugPrint('Failed to get user by token: $e');
       throw Exception('Failed to get user by token: $e');
     }
   }
 }
+
 
