@@ -89,8 +89,8 @@ class AnimatedBorderBox extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = (index % 2 == 0)
-        ? [Colors.cyan, Colors.purple]
-        : [Colors.purple, Colors.cyan];
+        ? const [Colors.cyan, Colors.purple]
+        : const [Colors.purple, Colors.cyan];
     return AnimatedBorder(
       colors: colors,
       child: child,
@@ -113,7 +113,7 @@ class _ProfileSelectionScreenState extends State<ProfileSelectionScreen> {
   List<Map<String, dynamic>> _profiles = [];
   int get maxProfiles => 5;
 
-  final List<String> defaultAvatars = [
+  static const List<String> defaultAvatars = [
     "assets/profile1.jpg",
     "assets/profile2.jpg",
     "assets/profile3.webp",
@@ -121,7 +121,7 @@ class _ProfileSelectionScreenState extends State<ProfileSelectionScreen> {
     "assets/profile5.jpg",
   ];
 
-  final List<String> defaultBackgrounds = [
+  static const List<String> defaultBackgrounds = [
     "assets/background1.jpg",
     "assets/background2.jpg",
     "assets/background3.webp",
@@ -145,9 +145,8 @@ class _ProfileSelectionScreenState extends State<ProfileSelectionScreen> {
   }
 
   Future<void> _loadCurrentUserAndProfiles() async {
-    final context = this.context;
     try {
-      User? user = _auth.currentUser;
+      final user = _auth.currentUser;
       if (user == null) {
         debugPrint('ℹ️ No user signed in');
         if (mounted) {
@@ -158,23 +157,12 @@ class _ProfileSelectionScreenState extends State<ProfileSelectionScreen> {
       }
 
       debugPrint('🔍 Checking session for user: ${user.uid}');
-      DocumentSnapshot sessionDoc =
+      final sessionDoc =
           await _firestore.collection('sessions').doc(user.uid).get();
       if (!sessionDoc.exists) {
         debugPrint('❌ No Firestore session found for user: ${user.uid}');
-        String? token = await user.getIdToken();
-        if (token != null) {
-          await _firestore.collection('sessions').doc(user.uid).set({
-            'userId': user.uid,
-            'token': token,
-            'expiresAt':
-                Timestamp.fromDate(DateTime.now().add(Duration(days: 5))),
-            'createdAt': FieldValue.serverTimestamp(),
-          }, SetOptions(merge: true));
-          await SessionManager.saveAuthToken(token);
-          await SessionManager.saveSessionUserId(user.uid);
-          debugPrint('✅ Created new session for user: ${user.uid}');
-        } else {
+        final token = await user.getIdToken();
+        if (token == null) {
           debugPrint('❌ Failed to get ID token');
           if (mounted) {
             Navigator.pushReplacement(context,
@@ -182,17 +170,25 @@ class _ProfileSelectionScreenState extends State<ProfileSelectionScreen> {
           }
           return;
         }
+        await _firestore.collection('sessions').doc(user.uid).set({
+          'userId': user.uid,
+          'token': token,
+          'expiresAt':
+              Timestamp.fromDate(DateTime.now().add(const Duration(days: 5))),
+          'createdAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+        await SessionManager.saveAuthToken(token);
+        await SessionManager.saveSessionUserId(user.uid);
+        debugPrint('✅ Created new session for user: ${user.uid}');
       } else {
-        Map<String, dynamic> sessionData =
-            sessionDoc.data() as Map<String, dynamic>;
-        Timestamp? expiresAt = sessionData['expiresAt'] as Timestamp?;
+        final sessionData = sessionDoc.data();
+        final expiresAt = sessionData?['expiresAt'] as Timestamp?;
         if (expiresAt == null || DateTime.now().isAfter(expiresAt.toDate())) {
           debugPrint('❌ Session expired or invalid');
+          if (!mounted) return;
           await SessionManager.clearAuthToken();
-          if (mounted) {
-            Navigator.pushReplacement(context,
-                MaterialPageRoute(builder: (_) => const SignInScreen()));
-          }
+          Navigator.pushReplacement(
+              context, MaterialPageRoute(builder: (_) => const SignInScreen()));
           return;
         }
         debugPrint('✅ Valid session found');
@@ -203,8 +199,7 @@ class _ProfileSelectionScreenState extends State<ProfileSelectionScreen> {
       debugPrint('❌ Error in _loadCurrentUserAndProfiles: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error loading profiles: $e')),
-        );
+            const SnackBar(content: Text('Error loading profiles')));
         Navigator.pushReplacement(
             context, MaterialPageRoute(builder: (_) => const SignInScreen()));
       }
@@ -220,7 +215,14 @@ class _ProfileSelectionScreenState extends State<ProfileSelectionScreen> {
       setState(() {});
       return;
     }
-    final String userId = user['id'];
+    final userId = user['id']?.toString() ?? '';
+    if (userId.isEmpty) {
+      debugPrint('❌ Invalid user ID');
+      _profilesController.add([]);
+      _profiles = [];
+      setState(() {});
+      return;
+    }
     try {
       final profiles = await AuthDatabase.instance.getProfilesByUserId(userId);
       debugPrint(
@@ -235,8 +237,7 @@ class _ProfileSelectionScreenState extends State<ProfileSelectionScreen> {
       setState(() {});
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error refreshing profiles: $e')),
-        );
+            const SnackBar(content: Text('Error refreshing profiles')));
       }
     }
   }
@@ -253,182 +254,186 @@ class _ProfileSelectionScreenState extends State<ProfileSelectionScreen> {
   void _showAddProfileDialog() {
     final user = UserManager.instance.currentUser.value;
     if (user == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("No user logged in.")),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text("No user logged in.")));
+      }
+      return;
+    }
+    final userId = user['id']?.toString() ?? '';
+    if (userId.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text("Invalid user ID.")));
+      }
       return;
     }
     if (_profiles.length >= maxProfiles) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Maximum 5 profiles allowed.")),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("Maximum 5 profiles allowed.")));
+      }
       return;
     }
     final nameController = TextEditingController();
     final avatarController = TextEditingController();
     final pinController = TextEditingController();
 
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text("Add Profile"),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: nameController,
-              decoration: const InputDecoration(labelText: "Name"),
+    if (mounted) {
+      showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text("Add Profile"),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameController,
+                decoration: const InputDecoration(labelText: "Name"),
+              ),
+              TextField(
+                controller: avatarController,
+                decoration:
+                    const InputDecoration(labelText: "Avatar URL (optional)"),
+              ),
+              TextField(
+                controller: pinController,
+                decoration: const InputDecoration(labelText: "PIN (optional)"),
+                keyboardType: TextInputType.number,
+                obscureText: true,
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              child: const Text("Cancel"),
+              onPressed: () => Navigator.pop(context),
             ),
-            TextField(
-              controller: avatarController,
-              decoration:
-                  const InputDecoration(labelText: "Avatar URL (optional)"),
-            ),
-            TextField(
-              controller: pinController,
-              decoration: const InputDecoration(labelText: "PIN (optional)"),
-              keyboardType: TextInputType.number,
-              obscureText: true,
+            TextButton(
+              child: const Text("Add"),
+              onPressed: () async {
+                if (!mounted) return;
+                final scaffoldMessenger = ScaffoldMessenger.of(context);
+                if (nameController.text.trim().isEmpty) {
+                  scaffoldMessenger.showSnackBar(const SnackBar(
+                      content: Text("Profile name is required.")));
+                  return;
+                }
+                try {
+                  String avatarUrl = avatarController.text.trim();
+                  String backgroundUrl;
+                  if (avatarUrl.isEmpty) {
+                    final usedAvatars = _profiles
+                        .map((p) => p['avatar'] as String)
+                        .where((a) => defaultAvatars.contains(a))
+                        .toList();
+                    final availableAvatars = defaultAvatars
+                        .where((a) => !usedAvatars.contains(a))
+                        .toList();
+                    avatarUrl = availableAvatars.isNotEmpty
+                        ? availableAvatars[
+                            Random().nextInt(availableAvatars.length)]
+                        : defaultAvatars[
+                            Random().nextInt(defaultAvatars.length)];
+                    backgroundUrl = defaultBackgrounds[
+                        Random().nextInt(defaultBackgrounds.length)];
+                  } else {
+                    avatarUrl = _processUrl(avatarUrl);
+                    backgroundUrl = defaultBackgrounds[
+                        Random().nextInt(defaultBackgrounds.length)];
+                  }
+                  final newProfile = {
+                    'id': DateTime.now().millisecondsSinceEpoch.toString(),
+                    'user_id': userId,
+                    'name': nameController.text.trim(),
+                    'avatar': avatarUrl,
+                    'backgroundImage': backgroundUrl,
+                    'pin': pinController.text.trim().isEmpty
+                        ? null
+                        : pinController.text.trim(),
+                    'locked': pinController.text.trim().isEmpty ? 0 : 1,
+                    'created_at': DateTime.now().toIso8601String(),
+                    'updated_at': DateTime.now().toIso8601String(),
+                  };
+                  debugPrint('📝 Creating profile: $newProfile');
+                  await AuthDatabase.instance.createProfile(newProfile);
+                  await _firestore
+                      .collection('profiles')
+                      .doc(newProfile['id'] as String)
+                      .set(newProfile, SetOptions(merge: true));
+                  Navigator.pop(context);
+                  await _refreshProfiles();
+                  scaffoldMessenger.showSnackBar(SnackBar(
+                      content:
+                          Text("Profile '${newProfile['name']}' created.")));
+                } catch (e) {
+                  debugPrint('❌ Error creating profile: $e');
+                  scaffoldMessenger.showSnackBar(
+                      const SnackBar(content: Text('Error creating profile')));
+                }
+              },
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            child: const Text("Cancel"),
-            onPressed: () => Navigator.pop(context),
-          ),
-          TextButton(
-            child: const Text("Add"),
-            onPressed: () async {
-              final scaffoldMessenger = ScaffoldMessenger.of(context);
-              if (nameController.text.trim().isEmpty) {
-                scaffoldMessenger.showSnackBar(
-                  const SnackBar(content: Text("Profile name is required.")),
-                );
-                return;
-              }
-              try {
-                final String userId = user['id'];
-                String avatarUrl = avatarController.text.trim();
-                String backgroundUrl;
-                if (avatarUrl.isEmpty) {
-                  final usedAvatars = _profiles
-                      .map((p) => p['avatar'] as String)
-                      .where((a) => defaultAvatars.contains(a))
-                      .toList();
-                  final availableAvatars = defaultAvatars
-                      .where((a) => !usedAvatars.contains(a))
-                      .toList();
-                  avatarUrl = availableAvatars.isNotEmpty
-                      ? availableAvatars[
-                          Random().nextInt(availableAvatars.length)]
-                      : defaultAvatars[Random().nextInt(defaultAvatars.length)];
-                  backgroundUrl = defaultBackgrounds[
-                      Random().nextInt(defaultBackgrounds.length)];
-                } else {
-                  avatarUrl = _processUrl(avatarUrl);
-                  backgroundUrl = defaultBackgrounds[
-                      Random().nextInt(defaultBackgrounds.length)];
-                }
-                final newProfile = {
-                  'id': DateTime.now().millisecondsSinceEpoch.toString(),
-                  'user_id': userId,
-                  'name': nameController.text.trim(),
-                  'avatar': avatarUrl,
-                  'backgroundImage': backgroundUrl,
-                  'pin': pinController.text.trim().isEmpty
-                      ? null
-                      : pinController.text.trim(),
-                  'locked': pinController.text.trim().isEmpty ? 0 : 1,
-                  'created_at': DateTime.now().toIso8601String(),
-                  'updated_at': DateTime.now().toIso8601String(),
-                };
-                debugPrint('📝 Creating profile: $newProfile');
-                await AuthDatabase.instance.createProfile(newProfile);
-                await _firestore
-                    .collection('users')
-                    .doc(userId)
-                    .collection('profiles')
-                    .doc(newProfile['id'] as String)
-                    .set(newProfile, SetOptions(merge: true));
-                Navigator.pop(context);
-                await _refreshProfiles();
-                scaffoldMessenger.showSnackBar(
-                  SnackBar(
-                      content:
-                          Text("Profile '${newProfile['name']}' created.")),
-                );
-              } catch (e) {
-                debugPrint('❌ Error creating profile: $e');
-                scaffoldMessenger.showSnackBar(
-                  SnackBar(content: Text('Error creating profile: $e')),
-                );
-              }
-            },
-          ),
-        ],
-      ),
-    );
+      );
+    }
   }
 
   Future<void> _updateAvatar(Map<String, dynamic> profile) async {
     final currentAvatar = profile['avatar'] as String? ?? "";
     final avatarController = TextEditingController(text: currentAvatar);
 
-    await showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text("Update Avatar URL"),
-        content: TextField(
-          controller: avatarController,
-          decoration: const InputDecoration(labelText: "New Avatar URL"),
+    if (mounted) {
+      await showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text("Update Avatar URL"),
+          content: TextField(
+            controller: avatarController,
+            decoration: const InputDecoration(labelText: "New Avatar URL"),
+          ),
+          actions: [
+            TextButton(
+              child: const Text("Cancel"),
+              onPressed: () => Navigator.pop(context),
+            ),
+            TextButton(
+              child: const Text("Update"),
+              onPressed: () async {
+                if (!mounted) return;
+                final scaffoldMessenger = ScaffoldMessenger.of(context);
+                final newUrl = _processUrl(avatarController.text.trim());
+                if (newUrl.isEmpty) {
+                  scaffoldMessenger.showSnackBar(const SnackBar(
+                      content: Text("Avatar URL cannot be empty.")));
+                  return;
+                }
+                if (newUrl == currentAvatar) {
+                  Navigator.pop(context);
+                  return;
+                }
+                profile['avatar'] = newUrl;
+                try {
+                  await AuthDatabase.instance.updateProfile(profile);
+                  await _firestore
+                      .collection('profiles')
+                      .doc(profile['id'])
+                      .update({'avatar': newUrl});
+                  Navigator.pop(context);
+                  await _refreshProfiles();
+                  scaffoldMessenger.showSnackBar(
+                      const SnackBar(content: Text("Avatar updated.")));
+                } catch (e) {
+                  debugPrint('❌ Error updating avatar: $e');
+                  scaffoldMessenger.showSnackBar(
+                      const SnackBar(content: Text('Error updating avatar')));
+                }
+              },
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            child: const Text("Cancel"),
-            onPressed: () => Navigator.pop(context),
-          ),
-          TextButton(
-            child: const Text("Update"),
-            onPressed: () async {
-              final scaffoldMessenger = ScaffoldMessenger.of(context);
-              final newUrl = _processUrl(avatarController.text.trim());
-              if (newUrl.isEmpty) {
-                scaffoldMessenger.showSnackBar(
-                  const SnackBar(content: Text("Avatar URL cannot be empty.")),
-                );
-                return;
-              }
-              if (newUrl == currentAvatar) {
-                Navigator.pop(context);
-                return;
-              }
-              profile['avatar'] = newUrl;
-              try {
-                await AuthDatabase.instance.updateProfile(profile);
-                final userId = profile['user_id'] as String;
-                await _firestore
-                    .collection('users')
-                    .doc(userId)
-                    .collection('profiles')
-                    .doc(profile['id'] as String)
-                    .update({'avatar': newUrl});
-                Navigator.pop(context);
-                await _refreshProfiles();
-                scaffoldMessenger.showSnackBar(
-                  const SnackBar(content: Text("Avatar updated.")),
-                );
-              } catch (e) {
-                debugPrint('❌ Error updating avatar: $e');
-                scaffoldMessenger.showSnackBar(
-                  SnackBar(content: Text('Error updating avatar: $e')),
-                );
-              }
-            },
-          ),
-        ],
-      ),
-    );
+      );
+    }
   }
 
   Future<void> _deleteProfile(Map<String, dynamic> profile) async {
@@ -451,28 +456,24 @@ class _ProfileSelectionScreenState extends State<ProfileSelectionScreen> {
       ),
     );
 
-    if (confirm == true) {
-      final scaffoldMessenger = ScaffoldMessenger.of(context);
-      final userId = profile['user_id'] as String;
-      final profileId = profile['id'] as String;
-      try {
-        await AuthDatabase.instance.deleteProfile(profileId);
-        await _firestore
-            .collection('users')
-            .doc(userId)
-            .collection('profiles')
-            .doc(profileId)
-            .delete();
-        await _refreshProfiles();
-        scaffoldMessenger.showSnackBar(
-          SnackBar(content: Text("Profile '${profile['name']}' deleted.")),
-        );
-      } catch (e) {
-        debugPrint('❌ Error deleting profile: $e');
-        scaffoldMessenger.showSnackBar(
-          SnackBar(content: Text('Error deleting profile: $e')),
-        );
-      }
+    if (confirm != true || !mounted) return;
+    final scaffoldMessenger = ScaffoldMessenger.of(context);
+    final profileId = profile['id']?.toString() ?? '';
+    if (profileId.isEmpty) {
+      scaffoldMessenger
+          .showSnackBar(const SnackBar(content: Text("Invalid profile ID.")));
+      return;
+    }
+    try {
+      await AuthDatabase.instance.deleteProfile(profileId);
+      await _firestore.collection('profiles').doc(profileId).delete();
+      await _refreshProfiles();
+      scaffoldMessenger.showSnackBar(
+          SnackBar(content: Text("Profile '${profile['name']}' deleted.")));
+    } catch (e) {
+      debugPrint('❌ Error deleting profile: $e');
+      scaffoldMessenger.showSnackBar(
+          const SnackBar(content: Text('Error deleting profile')));
     }
   }
 
@@ -487,71 +488,76 @@ class _ProfileSelectionScreenState extends State<ProfileSelectionScreen> {
 
   void _showPinDialog(Map<String, dynamic> profile) {
     final pinController = TextEditingController();
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text("Enter PIN"),
-        content: TextField(
-          controller: pinController,
-          decoration: const InputDecoration(labelText: "PIN"),
-          keyboardType: TextInputType.number,
-          obscureText: true,
+    if (mounted) {
+      showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text("Enter PIN"),
+          content: TextField(
+            controller: pinController,
+            decoration: const InputDecoration(labelText: "PIN"),
+            keyboardType: TextInputType.number,
+            obscureText: true,
+          ),
+          actions: [
+            TextButton(
+              child: const Text("Cancel"),
+              onPressed: () => Navigator.pop(context),
+            ),
+            TextButton(
+              child: const Text("Submit"),
+              onPressed: () {
+                if (!mounted) return;
+                if (pinController.text.trim() == profile['pin']) {
+                  Navigator.pop(context);
+                  _selectProfile(profile);
+                } else {
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                        content: Text(
+                            "Incorrect PIN for profile '${profile['name']}'.")),
+                  );
+                }
+              },
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            child: const Text("Cancel"),
-            onPressed: () => Navigator.pop(context),
-          ),
-          TextButton(
-            child: const Text("Submit"),
-            onPressed: () {
-              if (pinController.text.trim() == profile['pin']) {
-                Navigator.pop(context);
-                _selectProfile(profile);
-              } else {
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content:
-                        Text("Incorrect PIN for profile '${profile['name']}'."),
-                  ),
-                );
-              }
-            },
-          ),
-        ],
-      ),
-    );
+      );
+    }
   }
 
   void _selectProfile(Map<String, dynamic> profile) {
     debugPrint(
         '🚀 Navigating to HomeScreenMain with profile: ${profile['name']}');
     UserManager.instance.updateProfile(profile);
-    Navigator.pushReplacement(
-      context,
-      PageRouteBuilder(
-        transitionDuration: const Duration(milliseconds: 800),
-        pageBuilder: (context, animation, secondaryAnimation) => HomeScreenMain(
-          profileName: profile['name'] as String,
+    if (mounted) {
+      Navigator.pushReplacement(
+        context,
+        PageRouteBuilder(
+          transitionDuration: const Duration(milliseconds: 800),
+          pageBuilder: (context, animation, secondaryAnimation) =>
+              HomeScreenMain(
+            profileName: profile['name'] as String,
+          ),
+          transitionsBuilder: (context, animation, secondaryAnimation, child) {
+            const begin = 0.0;
+            const end = 1.0;
+            final scaleTween = Tween(begin: begin, end: end)
+                .chain(CurveTween(curve: Curves.easeInOut));
+            final fadeTween = Tween(begin: 0.0, end: 1.0)
+                .chain(CurveTween(curve: Curves.easeIn));
+            return ScaleTransition(
+              scale: animation.drive(scaleTween),
+              child: FadeTransition(
+                opacity: animation.drive(fadeTween),
+                child: child,
+              ),
+            );
+          },
         ),
-        transitionsBuilder: (context, animation, secondaryAnimation, child) {
-          const begin = 0.0;
-          const end = 1.0;
-          var scaleTween = Tween(begin: begin, end: end)
-              .chain(CurveTween(curve: Curves.easeInOut));
-          var fadeTween = Tween(begin: 0.0, end: 1.0)
-              .chain(CurveTween(curve: Curves.easeIn));
-          return ScaleTransition(
-            scale: animation.drive(scaleTween),
-            child: FadeTransition(
-              opacity: animation.drive(fadeTween),
-              child: child,
-            ),
-          );
-        },
-      ),
-    );
+      );
+    }
   }
 
   Widget _buildAddProfileTile() {
@@ -571,9 +577,9 @@ class _ProfileSelectionScreenState extends State<ProfileSelectionScreen> {
   }
 
   Widget _buildProfileTile(Map<String, dynamic> profile, int index) {
-    final String name = profile['name'] as String? ?? "Unknown Profile";
-    String avatar = profile['avatar'] as String? ?? "";
-    final bool locked = (profile['locked'] as int?) == 1;
+    final name = profile['name'] as String? ?? "Unknown Profile";
+    var avatar = profile['avatar'] as String? ?? "";
+    final locked = (profile['locked'] as int?) == 1;
 
     if (avatar.isEmpty || !avatar.startsWith("http")) {
       avatar = defaultAvatars[Random().nextInt(defaultAvatars.length)];
@@ -590,11 +596,11 @@ class _ProfileSelectionScreenState extends State<ProfileSelectionScreen> {
         child: Container(
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(12),
-            boxShadow: [
+            boxShadow: const [
               BoxShadow(
-                color: Colors.black.withOpacity(0.3),
+                color: Colors.black26,
                 blurRadius: 10,
-                offset: const Offset(0, 4),
+                offset: Offset(0, 4),
               ),
             ],
           ),
@@ -612,7 +618,7 @@ class _ProfileSelectionScreenState extends State<ProfileSelectionScreen> {
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     Expanded(
-                      child: (avatar.startsWith("assets/"))
+                      child: avatar.startsWith("assets/")
                           ? Image.asset(
                               avatar,
                               fit: BoxFit.cover,
@@ -624,11 +630,9 @@ class _ProfileSelectionScreenState extends State<ProfileSelectionScreen> {
                               width: double.infinity,
                               placeholder: (context, url) => const Center(
                                   child: CircularProgressIndicator()),
-                              errorWidget: (context, url, error) => Container(
-                                color: Colors.grey,
-                                child: const Icon(Icons.error,
-                                    color: Colors.redAccent),
-                              ),
+                              errorWidget: (context, url, error) => const Icon(
+                                  Icons.error,
+                                  color: Colors.redAccent),
                             ),
                     ),
                     const SizedBox(height: 8),
@@ -739,9 +743,8 @@ class _ProfileSelectionScreenState extends State<ProfileSelectionScreen> {
                         if (index == profiles.length &&
                             profiles.length < maxProfiles) {
                           return _buildAddProfileTile();
-                        } else {
-                          return _buildProfileTile(profiles[index], index);
                         }
+                        return _buildProfileTile(profiles[index], index);
                       },
                     );
                   },
@@ -763,4 +766,5 @@ class _ProfileSelectionScreenState extends State<ProfileSelectionScreen> {
     );
   }
 }
+
 
