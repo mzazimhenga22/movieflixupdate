@@ -113,7 +113,6 @@ flutter:
     - assets/cinema.jpg
 
 flutter_launcher_icons:
-flutter_launcher_icons:
   android: true
   ios: true
   image_path: "assets/icon/movieflixiconv1.png"
