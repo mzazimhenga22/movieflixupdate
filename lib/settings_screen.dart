@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:movie_app/l10n/app_localizations.dart';
 import 'settings_provider.dart';
 
 class SettingsScreen extends StatelessWidget {
-  const SettingsScreen({Key? key}) : super(key: key); // Explicit Key parameter
+  const SettingsScreen({super.key});
 
-  // A map of available background color options.
   static const Map<String, Color> availableBackgroundColors = {
     'Default (Purple)': Colors.purple,
     'Indigo': Colors.indigo,
@@ -18,7 +18,7 @@ class SettingsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final settings = Provider.of<SettingsProvider>(context);
-    // Determine current selection by matching the provider's accentColor.
+    final localizations = AppLocalizations.of(context)!;
     String currentColorName = availableBackgroundColors.entries
         .firstWhere(
           (entry) => entry.value == settings.accentColor,
@@ -28,103 +28,100 @@ class SettingsScreen extends StatelessWidget {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Settings"),
+        title: Text(localizations.settings),
       ),
       body: ListView(
         children: [
-          // Existing settings...
           ListTile(
-            title: const Text("Download Quality"),
+            title: Text(localizations.downloadQuality),
             trailing: DropdownButton<String>(
               value: settings.downloadQuality,
-              items: const ['Low', 'Medium', 'High']
-                  .map((value) => DropdownMenuItem(
-                        value: value,
-                        child: Text(value),
-                      ))
-                  .toList(),
+              items: const [
+                DropdownMenuItem(value: 'Low', child: Text('Low')),
+                DropdownMenuItem(value: 'Medium', child: Text('Medium')),
+                DropdownMenuItem(value: 'High', child: Text('High')),
+              ],
               onChanged: (val) {
                 if (val != null) settings.setDownloadQuality(val);
               },
             ),
           ),
           SwitchListTile(
-            title: const Text("Download over Wi-Fi Only"),
+            title: Text(localizations.wifiOnlyDownloads),
             value: settings.wifiOnlyDownloads,
             onChanged: settings.setWifiOnlyDownloads,
           ),
           ListTile(
-            title: const Text("Playback Quality"),
+            title: Text(localizations.playbackQuality),
             trailing: DropdownButton<String>(
               value: settings.playbackQuality,
-              items: const ['480p', '720p', '1080p', '4K']
-                  .map((value) => DropdownMenuItem(
-                        value: value,
-                        child: Text(value),
-                      ))
-                  .toList(),
+              items: const [
+                DropdownMenuItem(value: '480p', child: Text('480p')),
+                DropdownMenuItem(value: '720p', child: Text('720p')),
+                DropdownMenuItem(value: '1080p', child: Text('1080p')),
+                DropdownMenuItem(value: '4K', child: Text('4K')),
+              ],
               onChanged: (val) {
                 if (val != null) settings.setPlaybackQuality(val);
               },
             ),
           ),
           SwitchListTile(
-            title: const Text("Subtitles"),
+            title: Text(localizations.subtitles),
             value: settings.subtitlesEnabled,
             onChanged: settings.setSubtitlesEnabled,
           ),
           ListTile(
-            title: const Text("Language"),
+            title: Text(localizations.language),
             trailing: DropdownButton<String>(
               value: settings.language,
-              items: const ['English', 'Spanish', 'French', 'German']
-                  .map((value) => DropdownMenuItem(
-                        value: value,
-                        child: Text(value),
-                      ))
-                  .toList(),
+              items: const [
+                DropdownMenuItem(value: 'English', child: Text('English')),
+                DropdownMenuItem(value: 'Spanish', child: Text('Spanish')),
+                DropdownMenuItem(value: 'French', child: Text('French')),
+                DropdownMenuItem(value: 'German', child: Text('German')),
+              ],
               onChanged: (val) {
                 if (val != null) settings.setLanguage(val);
               },
             ),
           ),
           SwitchListTile(
-            title: const Text("Auto-play Trailers"),
+            title: Text(localizations.autoPlayTrailers),
             value: settings.autoPlayTrailers,
             onChanged: settings.setAutoPlayTrailers,
           ),
           SwitchListTile(
-            title: const Text("Notifications"),
+            title: Text(localizations.notifications),
             value: settings.notificationsEnabled,
             onChanged: settings.setNotificationsEnabled,
           ),
           SwitchListTile(
-            title: const Text("Parental Control"),
+            title: Text(localizations.parentalControl),
             value: settings.parentalControl,
             onChanged: settings.setParentalControl,
           ),
           SwitchListTile(
-            title: const Text("Data Saver Mode"),
+            title: Text(localizations.dataSaverMode),
             value: settings.dataSaverMode,
             onChanged: settings.setDataSaverMode,
           ),
           ListTile(
-            title: const Text("Clear Cache"),
-            subtitle:
-                Text("Cache size: ${settings.cacheSize.toStringAsFixed(1)} MB"),
+            title: Text(localizations.clearCache),
+            subtitle: Text(
+                "${localizations.cacheSize}: ${settings.cacheSize.toStringAsFixed(1)} MB"),
             trailing: ElevatedButton(
               onPressed: () {
                 settings.clearCache();
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text("Cache cleared.")),
+                  SnackBar(content: Text(localizations.cacheCleared)),
                 );
               },
               child: const Text("Clear"),
             ),
           ),
-          // Updated Background Color Setting
           ListTile(
-            title: const Text("Background Color"),
+            title: Text(localizations.backgroundColor),
             trailing: DropdownButton<String>(
               value: currentColorName,
               items: availableBackgroundColors.entries

@@ -21,7 +21,7 @@ import 'package:shimmer/shimmer.dart';
 
 /// AnimatedBackground widget: Static gradient background for reduced GPU usage
 class AnimatedBackground extends StatelessWidget {
-  const AnimatedBackground({Key? key}) : super(key: key);
+  const AnimatedBackground({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -39,7 +39,7 @@ class AnimatedBackground extends StatelessWidget {
 
 /// RandomMovieScreen widget: Displays a random movie or TV show
 class RandomMovieScreen extends StatefulWidget {
-  const RandomMovieScreen({Key? key}) : super(key: key);
+  const RandomMovieScreen({super.key});
 
   @override
   RandomMovieScreenState createState() => RandomMovieScreenState();
@@ -112,7 +112,7 @@ class FeaturedMovieCard extends StatefulWidget {
   final VoidCallback? onTap;
 
   const FeaturedMovieCard({
-    Key? key,
+    super.key,
     required this.imageUrl,
     required this.title,
     required this.releaseDate,
@@ -121,7 +121,7 @@ class FeaturedMovieCard extends StatefulWidget {
     required this.trailerUrl,
     required this.isCurrentPage,
     this.onTap,
-  }) : super(key: key);
+  });
 
   @override
   FeaturedMovieCardState createState() => FeaturedMovieCardState();
@@ -377,7 +377,7 @@ class FeaturedMovieCardState extends State<FeaturedMovieCard> {
 
 /// FeaturedSlider widget: Manages a vertical carousel of featured content
 class FeaturedSlider extends StatefulWidget {
-  const FeaturedSlider({Key? key}) : super(key: key);
+  const FeaturedSlider({super.key});
 
   @override
   FeaturedSliderState createState() => FeaturedSliderState();
@@ -390,13 +390,19 @@ class FeaturedSliderState extends State<FeaturedSlider> {
   int pageCount = 0;
   bool isLoading = false;
   Timer? timer;
+  static List<Map<String, dynamic>> _cachedContent = [];
 
   @override
   void initState() {
     super.initState();
     pageController = PageController();
-    loadInitialContent();
-    startTimer();
+    if (_cachedContent.isNotEmpty) {
+      featuredContent = _cachedContent;
+      pageCount = featuredContent.length;
+      startTimer();
+    } else {
+      loadInitialContent();
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (pageController.hasClients) {
         pageController.position.isScrollingNotifier.addListener(onScroll);
@@ -410,9 +416,11 @@ class FeaturedSliderState extends State<FeaturedSlider> {
     final content = await fetchFeaturedContent(limit: 5);
     setState(() {
       featuredContent = content;
+      _cachedContent = content;
       pageCount = content.length;
       isLoading = false;
     });
+    startTimer();
   }
 
   Future<List<Map<String, dynamic>>> fetchFeaturedContent(
@@ -465,6 +473,7 @@ class FeaturedSliderState extends State<FeaturedSlider> {
     final newContent = await fetchFeaturedContent(limit: 5);
     setState(() {
       featuredContent.addAll(newContent);
+      _cachedContent = featuredContent;
       pageCount = featuredContent.length;
       isLoading = false;
     });
@@ -488,13 +497,13 @@ class FeaturedSliderState extends State<FeaturedSlider> {
             ),
             Positioned.fill(
               child: Container(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(16),
+                decoration: const BoxDecoration(
+                  borderRadius: BorderRadius.all(Radius.circular(16)),
                   gradient: LinearGradient(
                     begin: Alignment.bottomCenter,
                     end: Alignment.topCenter,
                     colors: [
-                      Colors.black.withOpacity(0.8),
+                      Color.fromRGBO(0, 0, 0, 0.8),
                       Colors.transparent,
                     ],
                   ),
@@ -551,9 +560,9 @@ class FeaturedSliderState extends State<FeaturedSlider> {
                       Container(
                         width: 120,
                         height: 36,
-                        decoration: BoxDecoration(
-                          color: Colors.grey[800],
-                          borderRadius: BorderRadius.circular(8),
+                        decoration: const BoxDecoration(
+                          color: Colors.grey,
+                          borderRadius: BorderRadius.all(Radius.circular(8)),
                         ),
                       ),
                       const SizedBox(width: 12),
@@ -618,6 +627,7 @@ class FeaturedSliderState extends State<FeaturedSlider> {
                 final trailerUrl = item['trailer_url'] ??
                     'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
                 return FeaturedMovieCard(
+                  key: ValueKey(imageUrl), // Ensure widget reuse
                   imageUrl: imageUrl,
                   title: title,
                   releaseDate: releaseDate,
@@ -643,18 +653,29 @@ class FeaturedSliderState extends State<FeaturedSlider> {
 /// HomeScreenMain widget: Main screen with optimized structure
 class HomeScreenMain extends StatefulWidget {
   final String? profileName;
-  const HomeScreenMain({Key? key, this.profileName}) : super(key: key);
+  const HomeScreenMain({super.key, this.profileName});
 
   @override
   HomeScreenMainState createState() => HomeScreenMainState();
 }
 
 class HomeScreenMainState extends State<HomeScreenMain>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, AutomaticKeepAliveClientMixin {
   int selectedIndex = 0;
   late AnimationController _textAnimationController;
   late Animation<double> _textFadeAnimation;
   final _subHomeScreenKey = GlobalKey<SubHomeScreenState>();
+
+  // Static cache for navigation items
+  static const _navItems = [
+    BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Home'),
+    BottomNavigationBarItem(icon: Icon(Icons.category), label: 'Categories'),
+    BottomNavigationBarItem(icon: Icon(Icons.download), label: 'Downloads'),
+    BottomNavigationBarItem(icon: Icon(Icons.live_tv), label: 'Interactive'),
+  ];
+
+  @override
+  bool get wantKeepAlive => true;
 
   @override
   void initState() {
@@ -696,14 +717,16 @@ class HomeScreenMainState extends State<HomeScreenMain>
 
   @override
   Widget build(BuildContext context) {
+    super.build(context); // Required for AutomaticKeepAliveClientMixin
     final screenHeight = MediaQuery.of(context).size.height;
-    return Consumer<SettingsProvider>(
-      builder: (context, settings, child) {
+    return Selector<SettingsProvider, Color>(
+      selector: (_, settings) => settings.accentColor,
+      builder: (context, accentColor, child) {
         return Scaffold(
           backgroundColor: Colors.transparent,
           appBar: AppBar(
             automaticallyImplyLeading: false,
-            backgroundColor: settings.accentColor.withOpacity(0.1),
+            backgroundColor: accentColor.withOpacity(0.1),
             elevation: 0,
             title: FadeTransition(
               opacity: _textFadeAnimation,
@@ -712,12 +735,14 @@ class HomeScreenMainState extends State<HomeScreenMain>
                     ? "Welcome, ${widget.profileName}"
                     : "Movie App",
                 style: const TextStyle(
-                    fontWeight: FontWeight.bold, color: Colors.white),
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
               ),
             ),
             actions: [
               IconButton(
-                icon: Icon(Icons.search, color: settings.accentColor),
+                icon: Icon(Icons.search, color: accentColor),
                 onPressed: () {
                   Navigator.push(
                     context,
@@ -727,7 +752,7 @@ class HomeScreenMainState extends State<HomeScreenMain>
                 },
               ),
               IconButton(
-                icon: Icon(Icons.list, color: settings.accentColor),
+                icon: Icon(Icons.list, color: accentColor),
                 onPressed: () {
                   Navigator.push(
                     context,
@@ -737,7 +762,7 @@ class HomeScreenMainState extends State<HomeScreenMain>
                 },
               ),
               IconButton(
-                icon: Icon(Icons.person, color: settings.accentColor),
+                icon: Icon(Icons.person, color: accentColor),
                 onPressed: () {
                   Navigator.push(
                     context,
@@ -758,7 +783,7 @@ class HomeScreenMainState extends State<HomeScreenMain>
                       center: const Alignment(-0.06, -0.34),
                       radius: 1.0,
                       colors: [
-                        settings.accentColor.withOpacity(0.5),
+                        accentColor.withOpacity(0.5),
                         const Color.fromARGB(255, 0, 0, 0),
                       ],
                       stops: const [0.0, 0.59],
@@ -773,7 +798,7 @@ class HomeScreenMainState extends State<HomeScreenMain>
                       center: const Alignment(0.64, 0.3),
                       radius: 1.0,
                       colors: [
-                        settings.accentColor.withOpacity(0.3),
+                        accentColor.withOpacity(0.3),
                         Colors.transparent,
                       ],
                       stops: const [0.0, 0.55],
@@ -790,14 +815,14 @@ class HomeScreenMainState extends State<HomeScreenMain>
                         center: Alignment.center,
                         radius: 1.5,
                         colors: [
-                          settings.accentColor.withOpacity(0.3),
+                          accentColor.withOpacity(0.3),
                           Colors.transparent,
                         ],
                         stops: const [0.0, 1.0],
                       ),
                       boxShadow: [
                         BoxShadow(
-                          color: settings.accentColor.withOpacity(0.5),
+                          color: accentColor.withOpacity(0.5),
                           blurRadius: 12,
                           spreadRadius: 2,
                           offset: const Offset(0, 6),
@@ -809,11 +834,19 @@ class HomeScreenMainState extends State<HomeScreenMain>
                       child: BackdropFilter(
                         filter: ImageFilter.blur(sigmaX: 10.0, sigmaY: 10.0),
                         child: Container(
-                          decoration: BoxDecoration(
-                            color: const Color.fromARGB(160, 17, 19, 40),
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(
-                                color: Colors.white.withOpacity(0.125)),
+                          decoration: const BoxDecoration(
+                            color: Color.fromARGB(160, 17, 19, 40),
+                            borderRadius: BorderRadius.all(Radius.circular(12)),
+                            border: Border(
+                              top: BorderSide(
+                                  color: Color.fromRGBO(255, 255, 255, 0.125)),
+                              bottom: BorderSide(
+                                  color: Color.fromRGBO(255, 255, 255, 0.125)),
+                              left: BorderSide(
+                                  color: Color.fromRGBO(255, 255, 255, 0.125)),
+                              right: BorderSide(
+                                  color: Color.fromRGBO(255, 255, 255, 0.125)),
+                            ),
                           ),
                           child: RefreshIndicator(
                             onRefresh: refreshData,
@@ -854,9 +887,9 @@ class HomeScreenMainState extends State<HomeScreenMain>
                                                       BorderRadius.circular(24),
                                                   gradient: LinearGradient(
                                                     colors: [
-                                                      settings.accentColor
+                                                      accentColor
                                                           .withOpacity(0.2),
-                                                      settings.accentColor
+                                                      accentColor
                                                           .withOpacity(0.2),
                                                     ],
                                                     begin: Alignment.topLeft,
@@ -864,8 +897,7 @@ class HomeScreenMainState extends State<HomeScreenMain>
                                                   ),
                                                   boxShadow: [
                                                     BoxShadow(
-                                                      color: settings
-                                                          .accentColor
+                                                      color: accentColor
                                                           .withOpacity(0.6),
                                                       blurRadius: 12,
                                                       offset:
@@ -883,16 +915,17 @@ class HomeScreenMainState extends State<HomeScreenMain>
                                                       size: 120,
                                                     ),
                                                     Container(
-                                                      decoration: BoxDecoration(
+                                                      decoration:
+                                                          const BoxDecoration(
                                                         borderRadius:
-                                                            BorderRadius
-                                                                .circular(24),
+                                                            BorderRadius.all(
+                                                                Radius.circular(
+                                                                    24)),
                                                         gradient:
                                                             LinearGradient(
                                                           colors: [
-                                                            Colors.black
-                                                                .withOpacity(
-                                                                    0.2),
+                                                            Color.fromRGBO(
+                                                                0, 0, 0, 0.2),
                                                             Colors.transparent,
                                                           ],
                                                           begin: Alignment
@@ -955,7 +988,7 @@ class HomeScreenMainState extends State<HomeScreenMain>
             ],
           ),
           floatingActionButton: FloatingActionButton(
-            backgroundColor: settings.accentColor,
+            backgroundColor: accentColor,
             child: const Icon(Icons.shuffle),
             onPressed: () {
               Navigator.push(
@@ -965,21 +998,36 @@ class HomeScreenMainState extends State<HomeScreenMain>
               );
             },
           ),
-          bottomNavigationBar: BottomNavigationBar(
-            backgroundColor: Colors.black54,
-            selectedItemColor: const Color(0xffffeb00),
-            unselectedItemColor: settings.accentColor.withOpacity(0.6),
-            currentIndex: selectedIndex,
-            items: const [
-              BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Home'),
-              BottomNavigationBarItem(
-                  icon: Icon(Icons.category), label: 'Categories'),
-              BottomNavigationBarItem(
-                  icon: Icon(Icons.download), label: 'Downloads'),
-              BottomNavigationBarItem(
-                  icon: Icon(Icons.live_tv), label: 'Interactive'),
-            ],
-            onTap: onItemTapped,
+          bottomNavigationBar: Container(
+            decoration: BoxDecoration(
+              color: const Color.fromARGB(160, 17, 19, 40),
+              border: Border(
+                top: BorderSide(
+                    color: Colors.white.withOpacity(0.125), width: 1.0),
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: accentColor.withOpacity(0.3),
+                  blurRadius: 8,
+                  spreadRadius: 2,
+                ),
+              ],
+            ),
+            child: ClipRRect(
+              borderRadius:
+                  const BorderRadius.vertical(top: Radius.circular(12)),
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 10.0, sigmaY: 10.0),
+                child: BottomNavigationBar(
+                  backgroundColor: Colors.transparent,
+                  selectedItemColor: Colors.white,
+                  unselectedItemColor: accentColor.withOpacity(0.6),
+                  currentIndex: selectedIndex,
+                  items: _navItems,
+                  onTap: onItemTapped,
+                ),
+              ),
+            ),
           ),
         );
       },

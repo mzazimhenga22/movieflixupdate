@@ -7,6 +7,7 @@ import 'package:screen_brightness/screen_brightness.dart';
 import 'package:video_player/video_player.dart';
 import 'package:http/http.dart' as http;
 import 'package:movie_app/streaming_service.dart';
+import 'dart:io';
 
 class Subtitle {
   final Duration start;
@@ -24,6 +25,7 @@ class MainVideoPlayer extends StatefulWidget {
   final List<Map<String, dynamic>> similarMovies;
   final String? subtitleUrl;
   final bool isHls;
+  final bool isLocal; // New parameter for local file support
 
   const MainVideoPlayer({
     super.key,
@@ -34,6 +36,7 @@ class MainVideoPlayer extends StatefulWidget {
     this.similarMovies = const [],
     this.subtitleUrl,
     required this.isHls,
+    this.isLocal = false, // Default to false for network playback
   });
 
   @override
@@ -138,29 +141,42 @@ class MainVideoPlayerState extends State<MainVideoPlayer>
     if (_currentVideoPath.isEmpty) {
       if (mounted) {
         setState(() {
-          _errorMessage = "No valid video URL provided.";
+          _errorMessage = "No valid video URL or path provided.";
         });
       }
       return;
     }
 
-    _controller = VideoPlayerController.networkUrl(
-      Uri.parse(_currentVideoPath),
-      formatHint: widget.isHls ? VideoFormat.hls : VideoFormat.other,
-      httpHeaders: {
-        'Accept': '*/*',
-        'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-      },
-    )..addListener(() {
-        if (mounted) {
-          setState(() {
-            _isBuffering = _controller.value.isBuffering;
-            _updateSubtitle();
-            _checkForEndOfContent();
-          });
-        }
-      });
+    if (widget.isLocal) {
+      _controller = VideoPlayerController.file(File(_currentVideoPath))
+        ..addListener(() {
+          if (mounted) {
+            setState(() {
+              _isBuffering = _controller.value.isBuffering;
+              _updateSubtitle();
+              _checkForEndOfContent();
+            });
+          }
+        });
+    } else {
+      _controller = VideoPlayerController.networkUrl(
+        Uri.parse(_currentVideoPath),
+        formatHint: widget.isHls ? VideoFormat.hls : VideoFormat.other,
+        httpHeaders: {
+          'Accept': '*/*',
+          'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        },
+      )..addListener(() {
+          if (mounted) {
+            setState(() {
+              _isBuffering = _controller.value.isBuffering;
+              _updateSubtitle();
+              _checkForEndOfContent();
+            });
+          }
+        });
+    }
 
     try {
       await _controller.initialize();
@@ -571,10 +587,10 @@ class MainVideoPlayerState extends State<MainVideoPlayer>
         });
         _fetchNextEpisode();
       } else if (!widget.isFullSeason && !_showRecommendationsBar) {
-        setState(() {
+       		{
           _showRecommendationsBar = true;
           _showControls = true;
-        });
+        }
         _fetchRecommendations();
       }
     }
@@ -684,6 +700,7 @@ class MainVideoPlayerState extends State<MainVideoPlayer>
       similarMovies: widget.similarMovies,
       subtitleUrl: newSubtitleUrl ?? widget.subtitleUrl,
       isHls: isHls,
+      isLocal: widget.isLocal,
     );
     setState(() {
       _currentVideoPath = newWidget.videoPath;

@@ -18,7 +18,7 @@ import '../marketplace/marketplace_home.dart';
 import 'dart:math';
 
 class AnimatedBackground extends StatelessWidget {
-  const AnimatedBackground({Key? key}) : super(key: key);
+  const AnimatedBackground({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -35,7 +35,7 @@ class AnimatedBackground extends StatelessWidget {
 }
 
 class ProfileScreen extends StatefulWidget {
-  const ProfileScreen({Key? key}) : super(key: key);
+  const ProfileScreen({super.key});
 
   @override
   State<ProfileScreen> createState() => _ProfileScreenState();
@@ -62,8 +62,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Future<Map<String, dynamic>> _fetchProfile() async {
     try {
       debugPrint('Fetching profile data...');
-      final profile = UserManager.instance.currentProfile.value;
-      final user = UserManager.instance.currentUser.value;
+      final Map<String, dynamic>? profile =
+          UserManager.instance.currentProfile.value;
+      final Map<String, dynamic>? user = UserManager.instance.currentUser.value;
       debugPrint('User: $user');
       debugPrint('Profile: $profile');
 
@@ -72,16 +73,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
         return _defaultProfile;
       }
 
-      final userFromDB = await AuthDatabase.instance.getUserById(user['id']);
-      final userData = userFromDB ?? user;
+      final Map<String, dynamic>? userFromDB =
+          await AuthDatabase.instance.getUserById(user['id']);
+      final Map<String, dynamic> userData = userFromDB ?? user;
       debugPrint('User from DB: $userFromDB');
 
       if (profile != null && profile['id'] != null) {
-        final profileFromDB =
+        final Map<String, dynamic>? profileFromDB =
             await AuthDatabase.instance.getProfileById(profile['id']);
         debugPrint('Profile from DB: $profileFromDB');
         if (profileFromDB != null) {
-          final combinedData = {
+          final Map<String, dynamic> combinedData = {
             'id': profileFromDB['id'],
             'name': profileFromDB['name'] ?? 'Unnamed',
             'avatar': profileFromDB['avatar'],
@@ -92,7 +94,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           UserManager.instance.updateProfile(combinedData);
           return combinedData;
         }
-        final fallbackProfile = {
+        final Map<String, dynamic> fallbackProfile = {
           'id': profile['id'],
           'name': profile['name'] ?? 'Unnamed',
           'avatar': profile['avatar'],
@@ -105,7 +107,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         final int userId = userData['id'] as int? ?? 0;
         final String userName =
             userData['username'] as String? ?? 'User $userId';
-        final profileData = {
+        final Map<String, dynamic> profileData = {
           'id': userId,
           'name': userName,
           'avatar': userData['avatar'],
@@ -118,9 +120,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
       }
     } catch (e, stackTrace) {
       debugPrint('Error fetching profile: $e\n$stackTrace');
-      final user = UserManager.instance.currentUser.value;
-      final profile = UserManager.instance.currentProfile.value;
-      final fallbackProfile = profile ?? {};
+      final Map<String, dynamic>? user = UserManager.instance.currentUser.value;
+      final Map<String, dynamic>? profile =
+          UserManager.instance.currentProfile.value;
+      final Map<String, dynamic> fallbackProfile = profile ?? {};
       final int fallbackId =
           fallbackProfile['id'] as int? ?? user?['id'] as int? ?? 0;
       final String fallbackName = fallbackProfile['name'] as String? ??
@@ -178,62 +181,100 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return Shimmer.fromColors(
       baseColor: Colors.grey[300]!,
       highlightColor: Colors.grey[100]!,
-      child: Stack(
-        children: [
-          Positioned.fill(
-            child: Container(
-              decoration: BoxDecoration(
-                color: Colors.grey[300],
-                borderRadius: BorderRadius.circular(12),
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        child: Column(
+          children: [
+            // Placeholder for SliverAppBar background
+            Container(
+              height: 250,
+              color: Colors.grey[300],
+            ),
+            Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                children: [
+                  // Placeholder for avatar
+                  CircleAvatar(
+                    radius: 50,
+                    backgroundColor: Colors.grey[400],
+                  ),
+                  const SizedBox(height: 16),
+                  // Placeholder for name
+                  Container(
+                    width: 150,
+                    height: 24,
+                    color: Colors.grey[400],
+                  ),
+                  const SizedBox(height: 8),
+                  // Placeholder for email
+                  Container(
+                    width: 200,
+                    height: 16,
+                    color: Colors.grey[400],
+                  ),
+                  const SizedBox(height: 8),
+                  // Placeholder for bio
+                  Container(
+                    width: 250,
+                    height: 16,
+                    color: Colors.grey[400],
+                  ),
+                  const SizedBox(height: 24),
+                  // Placeholder for Marketplace card
+                  Container(
+                    height: 60,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[400],
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  // Placeholder for options list
+                  Container(
+                    decoration: BoxDecoration(
+                      color: Colors.grey[300],
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Column(
+                      children: List.generate(
+                          4,
+                          (index) => [
+                                ListTile(
+                                  leading: Container(
+                                    width: 24,
+                                    height: 24,
+                                    color: Colors.grey[400],
+                                  ),
+                                  title: Container(
+                                    width: 100,
+                                    height: 16,
+                                    color: Colors.grey[400],
+                                  ),
+                                  trailing: Container(
+                                    width: 16,
+                                    height: 16,
+                                    color: Colors.grey[400],
+                                  ),
+                                ),
+                                if (index < 3)
+                                  Divider(color: Colors.grey[400], height: 1),
+                              ]).expand((element) => element).toList(),
+                    ),
+                  ),
+                ],
               ),
             ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              children: [
-                CircleAvatar(
-                  radius: 50,
-                  backgroundColor: Colors.grey[400],
-                ),
-                const SizedBox(height: 16),
-                Container(
-                  width: 150,
-                  height: 24,
-                  color: Colors.grey[400],
-                ),
-                const SizedBox(height: 8),
-                Container(
-                  width: 200,
-                  height: 16,
-                  color: Colors.grey[400],
-                ),
-                const SizedBox(height: 8),
-                Container(
-                  width: 250,
-                  height: 16,
-                  color: Colors.grey[400],
-                ),
-                const SizedBox(height: 24),
-                Container(
-                  height: 60,
-                  decoration: BoxDecoration(
-                    color: Colors.grey[400],
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final settings = Provider.of<SettingsProvider>(context);
-    final screenHeight = MediaQuery.of(context).size.height;
+    final SettingsProvider settings = Provider.of<SettingsProvider>(context);
+    final double screenHeight = MediaQuery.of(context).size.height;
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: Stack(
@@ -320,14 +361,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               return ConstrainedBox(
                                 constraints:
                                     BoxConstraints(minHeight: screenHeight),
-                                child: SingleChildScrollView(
-                                  physics:
-                                      const AlwaysScrollableScrollPhysics(),
-                                  child: _buildShimmerPlaceholder(),
-                                ),
+                                child: _buildShimmerPlaceholder(),
                               );
                             }
-                            final profile = snapshot.data ?? _defaultProfile;
+                            final Map<String, dynamic> profile =
+                                snapshot.data ?? _defaultProfile;
                             return CustomScrollView(
                               physics: const AlwaysScrollableScrollPhysics(),
                               slivers: [
@@ -453,9 +491,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                                         horizontal: 24),
                                                 child: Row(
                                                   children: [
-                                                    Icon(Icons.storefront,
-                                                        color: settings
-                                                            .accentColor),
+                                                    Icon(
+                                                      Icons.storefront,
+                                                      color:
+                                                          settings.accentColor,
+                                                    ),
                                                     const SizedBox(width: 16),
                                                     Text(
                                                       'Marketplace',
@@ -508,7 +548,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                                       ),
                                                     ),
                                                   ),
-                                                  Divider(
+                                                  const Divider(
                                                       color: Colors.white24,
                                                       height: 1),
                                                   _buildOptionTile(
@@ -522,7 +562,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                                       ),
                                                     ),
                                                   ),
-                                                  Divider(
+                                                  const Divider(
                                                       color: Colors.white24,
                                                       height: 1),
                                                   _buildOptionTile(
@@ -536,7 +576,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                                       ),
                                                     ),
                                                   ),
-                                                  Divider(
+                                                  const Divider(
                                                       color: Colors.white24,
                                                       height: 1),
                                                   _buildOptionTile(
@@ -632,7 +672,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
         radius: 50,
         backgroundImage: CachedNetworkImageProvider(avatar),
         backgroundColor: Colors.grey[900],
-        onBackgroundImageError: (error, stackTrace) => null,
       );
     }
     return const AnimatedPlaceholderAvatar(size: 100);
@@ -667,8 +706,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 class AnimatedPlaceholderAvatar extends StatefulWidget {
   final double size;
 
-  const AnimatedPlaceholderAvatar({Key? key, required this.size})
-      : super(key: key);
+  const AnimatedPlaceholderAvatar({super.key, required this.size});
 
   @override
   State<AnimatedPlaceholderAvatar> createState() =>
@@ -685,7 +723,8 @@ class _AnimatedPlaceholderAvatarState extends State<AnimatedPlaceholderAvatar>
     _controller = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 2),
-    )..repeat();
+    );
+    _controller.repeat();
   }
 
   @override

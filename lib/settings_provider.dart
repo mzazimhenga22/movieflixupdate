@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
+import 'dart:io';
 
-class SettingsProvider extends ChangeNotifier {
-  // Existing settings
+class SettingsProvider with ChangeNotifier {
   String _downloadQuality = 'Medium';
   bool _wifiOnlyDownloads = true;
   String _playbackQuality = '720p';
@@ -11,12 +12,13 @@ class SettingsProvider extends ChangeNotifier {
   bool _notificationsEnabled = true;
   bool _parentalControl = false;
   bool _dataSaverMode = false;
-  double _cacheSize = 125.0; // in MB
+  double _cacheSize = 0.0;
+  Color _accentColor = Colors.red;
 
-  // Accent color for UI elements and backgrounds (replaces backgroundColor)
-  Color _accentColor = Colors.red; // Default to red to match HomeScreen
+  SettingsProvider() {
+    _loadCacheSize();
+  }
 
-  // Getters for existing settings
   String get downloadQuality => _downloadQuality;
   bool get wifiOnlyDownloads => _wifiOnlyDownloads;
   String get playbackQuality => _playbackQuality;
@@ -27,17 +29,13 @@ class SettingsProvider extends ChangeNotifier {
   bool get parentalControl => _parentalControl;
   bool get dataSaverMode => _dataSaverMode;
   double get cacheSize => _cacheSize;
-
-  // Getter for accent color
   Color get accentColor => _accentColor;
 
-  // Gradient using accent color with cinematic opacities
   List<Color> get accentGradientColors => [
         _accentColor.withOpacity(0.5),
         _accentColor.withOpacity(0.3),
       ];
 
-  // Setters that notify listeners
   void setDownloadQuality(String quality) {
     _downloadQuality = quality;
     notifyListeners();
@@ -83,14 +81,47 @@ class SettingsProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  // Set accent color
   void setAccentColor(Color color) {
     _accentColor = color;
     notifyListeners();
   }
 
-  void clearCache() {
+  Future<void> _loadCacheSize() async {
+    final tempDir = await getTemporaryDirectory();
+    double sizeInMB = 0.0;
+    if (tempDir.existsSync()) {
+      await for (var entity in tempDir.list(recursive: true)) {
+        if (entity is File) {
+          final sizeInBytes = await entity.length();
+          sizeInMB += sizeInBytes / (1024 * 1024); // Convert to MB
+        }
+      }
+    }
+    _cacheSize = sizeInMB;
+    notifyListeners();
+  }
+
+  Future<void> clearCache() async {
+    final tempDir = await getTemporaryDirectory();
+    if (tempDir.existsSync()) {
+      await tempDir.delete(recursive: true);
+      await tempDir.create(recursive: true); // Recreate empty directory
+    }
     _cacheSize = 0.0;
     notifyListeners();
+  }
+
+  Locale getLocale() {
+    switch (_language) {
+      case 'Spanish':
+        return const Locale('es');
+      case 'French':
+        return const Locale('fr');
+      case 'German':
+        return const Locale('de');
+      case 'English':
+      default:
+        return const Locale('en');
+    }
   }
 }

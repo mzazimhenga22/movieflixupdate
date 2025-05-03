@@ -9,11 +9,11 @@ class FeaturedMovieCard extends StatefulWidget {
   final List<int> genres;
   final double rating;
   final String trailerUrl;
-  final bool isCurrentPage; // New: Indicates if this card is currently visible
+  final bool isCurrentPage;
   final VoidCallback? onTap;
 
   const FeaturedMovieCard({
-    Key? key,
+    super.key,
     required this.imageUrl,
     required this.title,
     required this.releaseDate,
@@ -22,19 +22,22 @@ class FeaturedMovieCard extends StatefulWidget {
     required this.trailerUrl,
     required this.isCurrentPage,
     this.onTap,
-  }) : super(key: key);
+  });
 
   @override
-  _FeaturedMovieCardState createState() => _FeaturedMovieCardState();
+  State<FeaturedMovieCard> createState() => _FeaturedMovieCardState();
 }
 
-class _FeaturedMovieCardState extends State<FeaturedMovieCard> {
+class _FeaturedMovieCardState extends State<FeaturedMovieCard>
+    with AutomaticKeepAliveClientMixin {
   bool isFavorite = false;
   bool _showVideo = false;
   Timer? _videoTimer;
   YoutubePlayerController? _videoController;
+  String? _genresText;
 
-  final Map<int, String> genreMap = {
+  // Static cache for genre map and widgets
+  static const Map<int, String> _genreMap = {
     28: "Action",
     12: "Adventure",
     16: "Animation",
@@ -45,37 +48,55 @@ class _FeaturedMovieCardState extends State<FeaturedMovieCard> {
     878: "Sci-Fi",
   };
 
-  String getGenresText() {
-    return widget.genres.map((id) => genreMap[id] ?? "Unknown").join(', ');
+  static const _loadingWidget = SizedBox(
+    height: 320,
+    child: Center(child: CircularProgressIndicator()),
+  );
+
+  static const _errorWidget = SizedBox(
+    height: 320,
+    child: Center(child: Icon(Icons.error, color: Colors.red, size: 50)),
+  );
+
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  void initState() {
+    super.initState();
+    _genresText =
+        widget.genres.map((id) => _genreMap[id] ?? "Unknown").join(', ');
   }
 
   @override
   void didUpdateWidget(FeaturedMovieCard oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (widget.genres != oldWidget.genres) {
+      _genresText =
+          widget.genres.map((id) => _genreMap[id] ?? "Unknown").join(', ');
+    }
     if (widget.isCurrentPage != oldWidget.isCurrentPage) {
       if (widget.isCurrentPage) {
-        // Start timer to switch to video after 3 seconds when card is current
         _videoTimer = Timer(const Duration(seconds: 3), () {
           if (mounted && widget.isCurrentPage && widget.trailerUrl.isNotEmpty) {
             final videoId = YoutubePlayer.convertUrlToId(widget.trailerUrl);
             if (videoId != null) {
+              _videoController = YoutubePlayerController(
+                initialVideoId: videoId,
+                flags: const YoutubePlayerFlags(
+                  autoPlay: true,
+                  mute: false,
+                  hideControls: true,
+                  controlsVisibleAtStart: false,
+                ),
+              );
               setState(() {
                 _showVideo = true;
-                _videoController = YoutubePlayerController(
-                  initialVideoId: videoId,
-                  flags: const YoutubePlayerFlags(
-                    autoPlay: true,
-                    mute: false,
-                    hideControls: true,
-                    controlsVisibleAtStart: false,
-                  ),
-                );
               });
             }
           }
         });
       } else {
-        // Cancel timer and pause video when card is no longer current
         _videoTimer?.cancel();
         if (_videoController != null) {
           _videoController!.pause();
@@ -98,6 +119,7 @@ class _FeaturedMovieCardState extends State<FeaturedMovieCard> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context); // Required for AutomaticKeepAliveClientMixin
     return GestureDetector(
       onTap: widget.onTap,
       child: Padding(
@@ -105,18 +127,18 @@ class _FeaturedMovieCardState extends State<FeaturedMovieCard> {
         child: Stack(
           children: [
             ClipRRect(
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: const BorderRadius.all(Radius.circular(16)),
               child: AnimatedSwitcher(
                 duration: const Duration(milliseconds: 500),
                 child: _showVideo && _videoController != null
                     ? YoutubePlayer(
-                        key: const ValueKey('video'),
+                        key: ValueKey(widget.trailerUrl),
                         controller: _videoController!,
                         showVideoProgressIndicator: false,
                         aspectRatio: 16 / 9,
                       )
                     : Hero(
-                        key: const ValueKey('image'),
+                        key: ValueKey(widget.imageUrl),
                         tag: widget.imageUrl,
                         child: Image.network(
                           widget.imageUrl,
@@ -125,32 +147,23 @@ class _FeaturedMovieCardState extends State<FeaturedMovieCard> {
                           fit: BoxFit.cover,
                           loadingBuilder: (context, child, progress) {
                             if (progress == null) return child;
-                            return Container(
-                              height: 320,
-                              color: Colors.black12,
-                              child: const Center(child: CircularProgressIndicator()),
-                            );
+                            return _loadingWidget;
                           },
-                          errorBuilder: (context, error, stackTrace) => Container(
-                            height: 320,
-                            color: Colors.grey,
-                            child: const Center(
-                              child: Icon(Icons.error, color: Colors.red, size: 50),
-                            ),
-                          ),
+                          errorBuilder: (context, error, stackTrace) =>
+                              _errorWidget,
                         ),
                       ),
               ),
             ),
             Positioned.fill(
               child: Container(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(16),
+                decoration: const BoxDecoration(
+                  borderRadius: BorderRadius.all(Radius.circular(16)),
                   gradient: LinearGradient(
                     begin: Alignment.bottomCenter,
                     end: Alignment.topCenter,
                     colors: [
-                      Colors.black.withOpacity(0.8),
+                      Color.fromRGBO(0, 0, 0, 0.8),
                       Colors.transparent,
                     ],
                   ),
@@ -186,16 +199,19 @@ class _FeaturedMovieCardState extends State<FeaturedMovieCard> {
                     children: [
                       Text(
                         'Release Date: ${widget.releaseDate}',
-                        style: const TextStyle(color: Colors.white70, fontSize: 16),
+                        style: const TextStyle(
+                            color: Colors.white70, fontSize: 16),
                       ),
                       const Spacer(),
                       Row(
                         children: [
-                          const Icon(Icons.star, color: Colors.yellow, size: 18),
+                          const Icon(Icons.star,
+                              color: Colors.yellow, size: 18),
                           const SizedBox(width: 4),
                           Text(
                             widget.rating.toStringAsFixed(1),
-                            style: const TextStyle(color: Colors.white70, fontSize: 16),
+                            style: const TextStyle(
+                                color: Colors.white70, fontSize: 16),
                           ),
                         ],
                       ),
@@ -203,7 +219,7 @@ class _FeaturedMovieCardState extends State<FeaturedMovieCard> {
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    'Genres: ${getGenresText()}',
+                    'Genres: $_genresText',
                     style: const TextStyle(color: Colors.white70, fontSize: 14),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
@@ -214,11 +230,15 @@ class _FeaturedMovieCardState extends State<FeaturedMovieCard> {
                       ElevatedButton.icon(
                         onPressed: widget.onTap,
                         icon: const Icon(Icons.play_arrow, color: Colors.black),
-                        label: const Text('Watch Trailer', style: TextStyle(color: Colors.black)),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
+                        label: const Text('Watch Trailer',
+                            style: TextStyle(color: Colors.black)),
+                        style: const ButtonStyle(
+                          backgroundColor: WidgetStatePropertyAll(Colors.white),
+                          shape: WidgetStatePropertyAll(
+                            RoundedRectangleBorder(
+                              borderRadius:
+                                  BorderRadius.all(Radius.circular(8)),
+                            ),
                           ),
                         ),
                       ),
@@ -254,4 +274,4 @@ class _FeaturedMovieCardState extends State<FeaturedMovieCard> {
       ),
     );
   }
-} 
+}

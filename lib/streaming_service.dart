@@ -3,6 +3,10 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:logger/logger.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:flutter/material.dart';
+import 'package:movie_app/downloads_screen.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:flutter_downloader/flutter_downloader.dart';
 
 class StreamingService {
   static final _logger = Logger();
@@ -123,5 +127,67 @@ class StreamingService {
       throw Exception('Failed to retrieve stream');
     }
   }
-}
 
+  static Future<void> prepareDownload({
+    required BuildContext context,
+    required String tmdbId,
+    required String title,
+    required String resolution,
+    required bool subtitles,
+    int? season,
+    int? episode,
+  }) async {
+    try {
+      final streamingInfo = await getStreamingLink(
+        tmdbId: tmdbId,
+        title: title,
+        resolution: resolution,
+        enableSubtitles: subtitles,
+        season: season,
+        episode: episode,
+      );
+      final downloadUrl = streamingInfo['url'];
+      final urlType = streamingInfo['type'] ?? 'unknown';
+
+      if (downloadUrl == null || downloadUrl.isEmpty) {
+        throw Exception('Download URL not available');
+      }
+
+      if (await Permission.storage.request().isGranted) {
+        final directory = Platform.isAndroid
+            ? (await getExternalStorageDirectory())!
+            : await getApplicationDocumentsDirectory();
+        final fileName =
+            "${title.replaceAll(RegExp(r'[^\w\s-]'), '')}-$resolution.${urlType == 'm3u8' ? 'mp4' : urlType}";
+        final taskId = await FlutterDownloader.enqueue(
+          url: downloadUrl,
+          savedDir: directory.path,
+          fileName: fileName,
+          showNotification: true,
+          openFileFromNotification: true,
+        );
+
+        if (context.mounted) {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (context) => DownloadsScreen(taskId: taskId),
+            ),
+          );
+        }
+      } else {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("Storage permission not granted")),
+          );
+        }
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Download failed: $e")),
+        );
+      }
+    }
+  }
+}

@@ -1,22 +1,50 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
-import 'package:movie_app/tmdb_api.dart'; // Your TMDB API helper
-import '../reel_player_screen.dart'; // Adjust the import as necessary
-import '../models/reel.dart'; // Import the shared Reel model
+import 'package:movie_app/tmdb_api.dart';
+import 'package:shimmer/shimmer.dart';
+import '../reel_player_screen.dart';
+import '../models/reel.dart';
 
 class ReelsSection extends StatefulWidget {
-  const ReelsSection({Key? key}) : super(key: key);
+  const ReelsSection({super.key});
 
   @override
-  _ReelsSectionState createState() => _ReelsSectionState();
+  State<ReelsSection> createState() => _ReelsSectionState();
 }
 
 class _ReelsSectionState extends State<ReelsSection>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, AutomaticKeepAliveClientMixin {
+  static List<dynamic> _cachedReels = [];
   List<dynamic> reelsData = [];
   late AnimationController _controller;
   late Animation<double> _shineAnimation;
   bool _isInitialized = false;
+
+  // Cache the loading widget as a shimmer placeholder
+  static final _loadingWidget = Shimmer.fromColors(
+    baseColor: Colors.grey[800]!,
+    highlightColor: Colors.grey[600]!,
+    child: ListView.builder(
+      scrollDirection: Axis.horizontal,
+      itemCount: 3, // Show 3 placeholder cards
+      itemBuilder: (context, index) {
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10.0, vertical: 20.0),
+          child: Container(
+            width: 160,
+            height: 320,
+            decoration: BoxDecoration(
+              color: Colors.grey[800],
+              borderRadius: BorderRadius.circular(20),
+            ),
+          ),
+        );
+      },
+    ),
+  );
+
+  @override
+  bool get wantKeepAlive => true;
 
   @override
   void initState() {
@@ -28,20 +56,35 @@ class _ReelsSectionState extends State<ReelsSection>
     _shineAnimation = Tween<double>(begin: 0, end: 1).animate(
       CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
     );
-    _isInitialized = true; // Mark as initialized after setting up animation
-    fetchReels();
+    _isInitialized = true;
+    if (_cachedReels.isNotEmpty) {
+      reelsData = _cachedReels;
+      setState(() {});
+    } else {
+      fetchReels();
+    }
   }
 
-  Future<void> fetchReels() async {
+  Future<void> fetchReels({bool forceRefresh = false}) async {
+    if (_cachedReels.isNotEmpty && !forceRefresh) {
+      if (reelsData != _cachedReels) {
+        setState(() {
+          reelsData = _cachedReels;
+        });
+      }
+      return;
+    }
+
     try {
       final fetchedReels = await TMDBApi.fetchReels();
       if (mounted) {
         setState(() {
           reelsData = fetchedReels;
+          _cachedReels = fetchedReels;
         });
       }
     } catch (e) {
-      print("Error fetching reels: $e");
+      debugPrint("Error fetching reels: $e");
     }
   }
 
@@ -53,6 +96,7 @@ class _ReelsSectionState extends State<ReelsSection>
 
   @override
   Widget build(BuildContext context) {
+    super.build(context); // Required for AutomaticKeepAliveClientMixin
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -68,9 +112,12 @@ class _ReelsSectionState extends State<ReelsSection>
                           begin: Alignment.topLeft,
                           end: Alignment.bottomRight,
                           colors: [
-                            Colors.red.withOpacity(0.8 - _shineAnimation.value * 0.4),
-                            Colors.redAccent.withOpacity(0.8 + _shineAnimation.value * 0.4),
-                            Colors.red.withOpacity(0.8 - _shineAnimation.value * 0.4),
+                            Colors.red
+                                .withOpacity(0.8 - _shineAnimation.value * 0.4),
+                            Colors.redAccent
+                                .withOpacity(0.8 + _shineAnimation.value * 0.4),
+                            Colors.red
+                                .withOpacity(0.8 - _shineAnimation.value * 0.4),
                           ],
                           stops: [
                             0.0,
@@ -84,7 +131,7 @@ class _ReelsSectionState extends State<ReelsSection>
                         style: TextStyle(
                           fontSize: 24,
                           fontWeight: FontWeight.bold,
-                          color: Colors.red, // Base color for non-shader fallback
+                          color: Colors.red,
                           shadows: [
                             Shadow(
                               color: Colors.red,
@@ -109,27 +156,29 @@ class _ReelsSectionState extends State<ReelsSection>
         SizedBox(
           height: 360,
           child: reelsData.isEmpty
-              ? const Center(child: CircularProgressIndicator())
+              ? _loadingWidget
               : ListView.builder(
                   scrollDirection: Axis.horizontal,
                   itemCount: reelsData.length,
                   itemBuilder: (context, index) {
                     final reel = reelsData[index];
-                    final title = reel['title'] ?? "Reel";
-                    final thumbnailUrl = reel['thumbnail_url'] ?? "";
+                    final title = reel['title'] as String? ?? "Reel";
+                    final thumbnailUrl = reel['thumbnail_url'] as String? ?? "";
+                    // Precompute reels list for navigation
+                    final List<Reel> reels = reelsData.map<Reel>((r) {
+                      return Reel(
+                        videoUrl: r['videoUrl'] as String? ?? "",
+                        movieTitle: r['title'] as String? ?? "Reel",
+                        movieDescription: "Watch the trailer",
+                      );
+                    }).toList();
 
                     return Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 10.0, vertical: 20.0),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10.0, vertical: 20.0),
                       child: GestureDetector(
+                        key: ValueKey(thumbnailUrl), // Ensure widget reuse
                         onTap: () {
-                          final List<Reel> reels = reelsData.map<Reel>((r) {
-                            return Reel(
-                              videoUrl: r['videoUrl'] ?? "",
-                              movieTitle: r['title'] ?? "Reel",
-                              movieDescription: "Watch the trailer",
-                            );
-                          }).toList();
-
                           Navigator.push(
                             context,
                             MaterialPageRoute(
@@ -142,21 +191,21 @@ class _ReelsSectionState extends State<ReelsSection>
                         },
                         child: Container(
                           width: 160,
-                          decoration: BoxDecoration(
+                          decoration: const BoxDecoration(
                             gradient: LinearGradient(
                               begin: Alignment.topLeft,
                               end: Alignment.bottomRight,
                               colors: [
-                                Colors.deepPurple.withOpacity(0.4),
-                                Colors.black.withOpacity(0.2),
+                                Color.fromRGBO(103, 58, 183, 0.4),
+                                Color.fromRGBO(0, 0, 0, 0.2),
                               ],
                             ),
                             boxShadow: [
                               BoxShadow(
-                                color: Colors.deepPurple.withOpacity(0.6),
+                                color: Color.fromRGBO(103, 58, 183, 0.6),
                                 blurRadius: 15,
                                 spreadRadius: 1,
-                                offset: const Offset(0, 4),
+                                offset: Offset(0, 4),
                               ),
                             ],
                           ),
@@ -165,12 +214,27 @@ class _ReelsSectionState extends State<ReelsSection>
                             child: BackdropFilter(
                               filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
                               child: Container(
-                                decoration: BoxDecoration(
-                                  color: const Color.fromARGB(180, 17, 19, 40),
-                                  borderRadius: BorderRadius.circular(20),
-                                  border: Border.all(
-                                    color: Colors.white.withOpacity(0.3),
-                                    width: 2.0,
+                                decoration: const BoxDecoration(
+                                  color: Color.fromARGB(180, 17, 19, 40),
+                                  borderRadius:
+                                      BorderRadius.all(Radius.circular(20)),
+                                  border: Border(
+                                    top: BorderSide(
+                                        color:
+                                            Color.fromRGBO(255, 255, 255, 0.3),
+                                        width: 2.0),
+                                    bottom: BorderSide(
+                                        color:
+                                            Color.fromRGBO(255, 255, 255, 0.3),
+                                        width: 2.0),
+                                    left: BorderSide(
+                                        color:
+                                            Color.fromRGBO(255, 255, 255, 0.3),
+                                        width: 2.0),
+                                    right: BorderSide(
+                                        color:
+                                            Color.fromRGBO(255, 255, 255, 0.3),
+                                        width: 2.0),
                                   ),
                                 ),
                                 child: Stack(
@@ -182,26 +246,34 @@ class _ReelsSectionState extends State<ReelsSection>
                                             ? Image.network(
                                                 thumbnailUrl,
                                                 fit: BoxFit.cover,
-                                                errorBuilder: (context, error, stackTrace) => Container(
-                                                  color: Colors.grey[900],
-                                                  child: const Icon(Icons.error, color: Colors.red, size: 40),
+                                                errorBuilder: (context, error,
+                                                        stackTrace) =>
+                                                    const ColoredBox(
+                                                  color: Color.fromRGBO(
+                                                      33, 33, 33, 1),
+                                                  child: Icon(Icons.error,
+                                                      color: Colors.red,
+                                                      size: 40),
                                                 ),
                                               )
-                                            : Container(
-                                                color: Colors.grey[900],
-                                                child: const Icon(Icons.movie, color: Colors.white70, size: 40),
+                                            : const ColoredBox(
+                                                color: Color.fromRGBO(
+                                                    33, 33, 33, 1),
+                                                child: Icon(Icons.movie,
+                                                    color: Colors.white70,
+                                                    size: 40),
                                               ),
                                       ),
                                     ),
                                     Positioned.fill(
                                       child: Container(
-                                        decoration: BoxDecoration(
+                                        decoration: const BoxDecoration(
                                           gradient: LinearGradient(
                                             begin: Alignment.topCenter,
                                             end: Alignment.bottomCenter,
                                             colors: [
                                               Colors.transparent,
-                                              Colors.black.withOpacity(0.7),
+                                              Color.fromRGBO(0, 0, 0, 0.7),
                                             ],
                                           ),
                                         ),
@@ -212,7 +284,8 @@ class _ReelsSectionState extends State<ReelsSection>
                                       left: 10,
                                       right: 10,
                                       child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
                                         children: [
                                           Text(
                                             title,
@@ -235,13 +308,15 @@ class _ReelsSectionState extends State<ReelsSection>
                                           Align(
                                             alignment: Alignment.centerRight,
                                             child: Container(
-                                              padding: const EdgeInsets.all(6.0),
-                                              decoration: BoxDecoration(
+                                              padding:
+                                                  const EdgeInsets.all(6.0),
+                                              decoration: const BoxDecoration(
                                                 shape: BoxShape.circle,
-                                                color: Colors.deepPurpleAccent.withOpacity(0.9),
+                                                color: Colors.deepPurpleAccent,
                                                 boxShadow: [
                                                   BoxShadow(
-                                                    color: Colors.deepPurple.withOpacity(0.5),
+                                                    color: Color.fromRGBO(
+                                                        103, 58, 183, 0.5),
                                                     blurRadius: 8,
                                                     spreadRadius: 2,
                                                   ),
