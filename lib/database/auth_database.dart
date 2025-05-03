@@ -12,6 +12,7 @@ class AuthDatabase {
   sqflite.Database? _sqfliteDb;
   sembast.Database? _sembastDb;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  bool _isInitialized = false;
 
   final _userStore = sembast.stringMapStoreFactory.store('users');
   final _profileStore = sembast.stringMapStoreFactory.store('profiles');
@@ -23,7 +24,15 @@ class AuthDatabase {
   AuthDatabase._init();
 
   Future<void> initialize() async {
-    await database; // Ensure database is initialized
+    if (_isInitialized) return;
+    try {
+      await database; // Ensure database is initialized
+      _isInitialized = true;
+      debugPrint('Database initialized successfully');
+    } catch (e) {
+      debugPrint('Failed to initialize database: $e');
+      rethrow;
+    }
   }
 
   Future<dynamic> get database async {
@@ -37,14 +46,21 @@ class AuthDatabase {
   }
 
   Future<sqflite.Database> _initializeSqflite() async {
-    final dbPath = await sqflite.getDatabasesPath();
-    final path = join(dbPath, 'auth.db');
-    return await sqflite.openDatabase(
-      path,
-      version: 1,
-      onConfigure: (db) async => await db.execute('PRAGMA foreign_keys = ON'),
-      onCreate: _createSQLiteDB,
-    );
+    try {
+      final dbPath = await sqflite.getDatabasesPath();
+      final path = join(dbPath, 'auth.db');
+      final db = await sqflite.openDatabase(
+        path,
+        version: 1,
+        onConfigure: (db) async => await db.execute('PRAGMA foreign_keys = ON'),
+        onCreate: _createSQLiteDB,
+      );
+      debugPrint('SQLite database opened at $path');
+      return db;
+    } catch (e) {
+      debugPrint('Failed to initialize SQLite database: $e');
+      throw Exception('Failed to initialize SQLite database: $e');
+    }
   }
 
   Future<void> _createSQLiteDB(sqflite.Database db, int version) async {
@@ -116,9 +132,24 @@ class AuthDatabase {
           FOREIGN KEY (following_id) REFERENCES users(id) ON DELETE CASCADE
         )
       ''');
+
+      debugPrint('SQLite tables created successfully');
     } catch (e) {
       debugPrint('Error creating SQLite tables: $e');
-      rethrow;
+      throw Exception('Error creating SQLite tables: $e');
+    }
+  }
+
+  Future<bool> _tableExists(sqflite.Database db, String tableName) async {
+    try {
+      final result = await db.rawQuery(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+        [tableName],
+      );
+      return result.isNotEmpty;
+    } catch (e) {
+      debugPrint('Error checking table existence for $tableName: $e');
+      return false;
     }
   }
 
@@ -144,7 +175,8 @@ class AuthDatabase {
             await _followersStore.findFirst(await database, finder: finder);
         return record != null;
       } else {
-        final result = await (await database).query(
+        final db = await database as sqflite.Database;
+        final result = await db.query(
           'followers',
           where: 'follower_id = ? AND following_id = ?',
           whereArgs: [followerId, followingId],
@@ -152,6 +184,7 @@ class AuthDatabase {
         return result.isNotEmpty;
       }
     } catch (e) {
+      debugPrint('Failed to check following status: $e');
       throw Exception('Failed to check following status: $e');
     }
   }
@@ -170,13 +203,15 @@ class AuthDatabase {
           'following_id': followingId,
         });
       } else {
-        await (await database).insert(
+        final db = await database as sqflite.Database;
+        await db.insert(
           'followers',
           {'follower_id': followerId, 'following_id': followingId},
           conflictAlgorithm: sqflite.ConflictAlgorithm.ignore,
         );
       }
     } catch (e) {
+      debugPrint('Failed to follow user: $e');
       throw Exception('Failed to follow user: $e');
     }
   }
@@ -201,13 +236,15 @@ class AuthDatabase {
         );
         await _followersStore.delete(await database, finder: finder);
       } else {
-        await (await database).delete(
+        final db = await database as sqflite.Database;
+        await db.delete(
           'followers',
           where: 'follower_id = ? AND following_id = ?',
           whereArgs: [followerId, followingId],
         );
       }
     } catch (e) {
+      debugPrint('Failed to unfollow user: $e');
       throw Exception('Failed to unfollow user: $e');
     }
   }
@@ -239,7 +276,8 @@ class AuthDatabase {
         await _profileStore.add(await database, profileData);
         await _firestore.collection('profiles').doc(newId).set(profileData);
       } else {
-        await (await database).insert('profiles', profileData,
+        final db = await database as sqflite.Database;
+        await db.insert('profiles', profileData,
             conflictAlgorithm: sqflite.ConflictAlgorithm.replace);
         await _firestore.collection('profiles').doc(newId).set(profileData);
       }
@@ -277,12 +315,18 @@ class AuthDatabase {
           return profileData;
         }).toList();
       } else {
-        final result = await (await database).query(
+        final db = await database as sqflite.Database;
+        if (!await _tableExists(db, 'profiles')) {
+          debugPrint('Profiles table does not exist in SQLite');
+          throw Exception('Profiles table not found');
+        }
+        final result = await db.query(
           'profiles',
           where: 'user_id = ?',
           whereArgs: [userId],
           orderBy: 'created_at ASC',
         );
+        debugPrint('SQLite query result for userId $userId: $result');
         localProfiles = result.map((r) {
           final profileData = Map<String, dynamic>.from(r);
           profileData['id'] = profileData['id'].toString();
@@ -337,8 +381,13 @@ class AuthDatabase {
         }
         return null;
       } else {
-        final result = await (await database)
-            .query('profiles', where: 'id = ?', whereArgs: [profileId]);
+        final db = await database as sqflite.Database;
+        if (!await _tableExists(db, 'profiles')) {
+          debugPrint('Profiles table does not exist in SQLite');
+          return null;
+        }
+        final result =
+            await db.query('profiles', where: 'id = ?', whereArgs: [profileId]);
         if (result.isNotEmpty) {
           final profileData = Map<String, dynamic>.from(result.first);
           profileData['id'] = profileData['id'].toString();
@@ -385,7 +434,12 @@ class AuthDatabase {
         }
         return null;
       } else {
-        final result = await (await database).query(
+        final db = await database as sqflite.Database;
+        if (!await _tableExists(db, 'profiles')) {
+          debugPrint('Profiles table does not exist in SQLite');
+          return null;
+        }
+        final result = await db.query(
           'profiles',
           where: 'user_id = ? AND locked = 0',
           whereArgs: [userId],
@@ -429,7 +483,8 @@ class AuthDatabase {
             .record(profileId)
             .update(await database, profileData);
       } else {
-        await (await database).update(
+        final db = await database as sqflite.Database;
+        await db.update(
           'profiles',
           profileData,
           where: 'id = ?',
@@ -451,7 +506,8 @@ class AuthDatabase {
         await _profileStore.record(profileId).delete(await database);
         return 1;
       } else {
-        return await (await database)
+        final db = await database as sqflite.Database;
+        return await db
             .delete('profiles', where: 'id = ?', whereArgs: [profileId]);
       }
     } catch (e) {
@@ -478,11 +534,13 @@ class AuthDatabase {
       } else {
         newId = DateTime.now().millisecondsSinceEpoch.toString();
         messageData['id'] = newId;
-        await (await database).insert('messages', messageData,
+        final db = await database as sqflite.Database;
+        await db.insert('messages', messageData,
             conflictAlgorithm: sqflite.ConflictAlgorithm.replace);
       }
       return newId;
     } catch (e) {
+      debugPrint('Failed to create message: $e');
       throw Exception('Failed to create message: $e');
     }
   }
@@ -511,7 +569,8 @@ class AuthDatabase {
           return messageData;
         }).toList();
       } else {
-        final result = await (await database).query(
+        final db = await database as sqflite.Database;
+        final result = await db.query(
           'messages',
           where:
               '(sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?)',
@@ -525,6 +584,7 @@ class AuthDatabase {
         }).toList();
       }
     } catch (e) {
+      debugPrint('Failed to fetch messages: $e');
       throw Exception('Failed to fetch messages: $e');
     }
   }
@@ -547,7 +607,8 @@ class AuthDatabase {
           return convoData;
         }).toList();
       } else {
-        final result = await (await database).query('conversations');
+        final db = await database as sqflite.Database;
+        final result = await db.query('conversations');
         return result
             .map((row) {
               final convo = jsonDecode(row['data'] as String);
@@ -563,6 +624,7 @@ class AuthDatabase {
             .cast<Map<String, dynamic>>();
       }
     } catch (e) {
+      debugPrint('Failed to fetch conversations: $e');
       throw Exception('Failed to fetch conversations: $e');
     }
   }
@@ -573,10 +635,12 @@ class AuthDatabase {
         await _messageStore.record(messageId).delete(await database);
         return 1;
       } else {
-        return await (await database)
+        final db = await database as sqflite.Database;
+        return await db
             .delete('messages', where: 'id = ?', whereArgs: [messageId]);
       }
     } catch (e) {
+      debugPrint('Failed to delete message: $e');
       throw Exception('Failed to delete message: $e');
     }
   }
@@ -595,7 +659,8 @@ class AuthDatabase {
             .record(messageId)
             .update(await database, messageData);
       } else {
-        await (await database).update(
+        final db = await database as sqflite.Database;
+        await db.update(
           'messages',
           messageData,
           where: 'id = ?',
@@ -604,6 +669,7 @@ class AuthDatabase {
       }
       return messageId;
     } catch (e) {
+      debugPrint('Failed to update message: $e');
       throw Exception('Failed to update message: $e');
     }
   }
@@ -614,13 +680,15 @@ class AuthDatabase {
       if (kIsWeb) {
         await _conversationStore.add(await database, conversationData);
       } else {
-        await (await database).insert(
+        final db = await database as sqflite.Database;
+        await db.insert(
           'conversations',
           {'data': jsonEncode(conversationData)},
           conflictAlgorithm: sqflite.ConflictAlgorithm.replace,
         );
       }
     } catch (e) {
+      debugPrint('Failed to insert conversation: $e');
       throw Exception('Failed to insert conversation: $e');
     }
   }
@@ -636,7 +704,8 @@ class AuthDatabase {
         );
         await _conversationStore.delete(await database, finder: finder);
       } else {
-        final result = await (await database).query('conversations');
+        final db = await database as sqflite.Database;
+        final result = await db.query('conversations');
         final idsToDelete = result
             .map((row) => jsonDecode(row['data'] as String))
             .where((convo) =>
@@ -644,11 +713,11 @@ class AuthDatabase {
             .map((convo) => convo['id'])
             .toList();
         for (final id in idsToDelete) {
-          await (await database)
-              .delete('conversations', where: 'id = ?', whereArgs: [id]);
+          await db.delete('conversations', where: 'id = ?', whereArgs: [id]);
         }
       }
     } catch (e) {
+      debugPrint('Failed to clear conversations: $e');
       throw Exception('Failed to clear conversations: $e');
     }
   }
@@ -657,10 +726,15 @@ class AuthDatabase {
     try {
       if (kIsWeb) {
         await _sembastDb?.close();
+        _sembastDb = null;
       } else {
         await _sqfliteDb?.close();
+        _sqfliteDb = null;
       }
+      _isInitialized = false;
+      debugPrint('Database closed');
     } catch (e) {
+      debugPrint('Failed to close database: $e');
       throw Exception('Failed to close database: $e');
     }
   }
@@ -709,7 +783,8 @@ class AuthDatabase {
         debugPrint('User created with ID: $userId');
         return userId;
       } else {
-        await (await database).insert(
+        final db = await database as sqflite.Database;
+        await db.insert(
           'users',
           filteredUserData,
           conflictAlgorithm: sqflite.ConflictAlgorithm.replace,
@@ -742,7 +817,8 @@ class AuthDatabase {
             await _userStore.findFirst(await database, finder: finder);
         return record?.value;
       } else {
-        final result = await (await database).query(
+        final db = await database as sqflite.Database;
+        final result = await db.query(
           'users',
           where: 'email = ?',
           whereArgs: [email],
@@ -768,7 +844,8 @@ class AuthDatabase {
         final record = await _userStore.record(id).get(await database);
         return record;
       } else {
-        final result = await (await database).query(
+        final db = await database as sqflite.Database;
+        final result = await db.query(
           'users',
           where: 'id = ?',
           whereArgs: [id],
@@ -814,7 +891,8 @@ class AuthDatabase {
             .record(userId)
             .update(await database, filteredUserData);
       } else {
-        await (await database).update(
+        final db = await database as sqflite.Database;
+        await db.update(
           'users',
           filteredUserData,
           where: 'id = ?',
@@ -836,7 +914,8 @@ class AuthDatabase {
         final records = await _userStore.find(await database);
         return records.map((r) => Map<String, dynamic>.from(r.value)).toList();
       } else {
-        final result = await (await database).query('users');
+        final db = await database as sqflite.Database;
+        final result = await db.query('users');
         return result.map((r) => Map<String, dynamic>.from(r)).toList();
       }
     } catch (e) {
@@ -858,7 +937,8 @@ class AuthDatabase {
         final records = await _userStore.find(await database, finder: finder);
         return records.map((r) => Map<String, dynamic>.from(r.value)).toList();
       } else {
-        final result = await (await database).query(
+        final db = await database as sqflite.Database;
+        final result = await db.query(
           'users',
           where: 'username LIKE ?',
           whereArgs: ['$query%'],
@@ -889,7 +969,8 @@ class AuthDatabase {
             await _userStore.findFirst(await database, finder: finder);
         return record?.value;
       } else {
-        final result = await (await database).query(
+        final db = await database as sqflite.Database;
+        final result = await db.query(
           'users',
           where: 'token = ?',
           whereArgs: [token],
@@ -904,5 +985,6 @@ class AuthDatabase {
     }
   }
 }
+
 
 
