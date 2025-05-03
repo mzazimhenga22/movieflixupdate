@@ -23,9 +23,10 @@ class MainVideoPlayer extends StatefulWidget {
   final bool isFullSeason;
   final List<String> episodeFiles;
   final List<Map<String, dynamic>> similarMovies;
-  final String? subtitleUrl;
+  final String? subtitleUrl; // For network subtitles
+  final String? localSubtitlePath; // For local subtitles
   final bool isHls;
-  final bool isLocal; // New parameter for local file support
+  final bool isLocal; // Parameter for local file support
 
   const MainVideoPlayer({
     super.key,
@@ -35,6 +36,7 @@ class MainVideoPlayer extends StatefulWidget {
     this.episodeFiles = const [],
     this.similarMovies = const [],
     this.subtitleUrl,
+    this.localSubtitlePath,
     required this.isHls,
     this.isLocal = false, // Default to false for network playback
   });
@@ -148,34 +150,28 @@ class MainVideoPlayerState extends State<MainVideoPlayer>
     }
 
     if (widget.isLocal) {
-      _controller = VideoPlayerController.file(File(_currentVideoPath))
-        ..addListener(() {
-          if (mounted) {
-            setState(() {
-              _isBuffering = _controller.value.isBuffering;
-              _updateSubtitle();
-              _checkForEndOfContent();
-            });
-          }
-        });
+      final file = File(_currentVideoPath);
+      if (!await file.exists()) {
+        if (mounted) {
+          setState(() {
+            _errorMessage = "Local file not found: $_currentVideoPath";
+          });
+        }
+        return;
+      }
+      _controller = VideoPlayerController.file(file)
+        ..addListener(_videoListener);
     } else {
+      final formatHint = _getVideoFormat(_currentVideoPath);
       _controller = VideoPlayerController.networkUrl(
         Uri.parse(_currentVideoPath),
-        formatHint: widget.isHls ? VideoFormat.hls : VideoFormat.other,
+        formatHint: formatHint,
         httpHeaders: {
           'Accept': '*/*',
           'User-Agent':
               'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         },
-      )..addListener(() {
-          if (mounted) {
-            setState(() {
-              _isBuffering = _controller.value.isBuffering;
-              _updateSubtitle();
-              _checkForEndOfContent();
-            });
-          }
-        });
+      )..addListener(_videoListener);
     }
 
     try {
@@ -195,6 +191,32 @@ class MainVideoPlayerState extends State<MainVideoPlayer>
           _errorMessage = "Failed to load video: $error";
         });
       }
+    }
+  }
+
+  void _videoListener() {
+    if (mounted) {
+      setState(() {
+        _isBuffering = _controller.value.isBuffering;
+        _updateSubtitle();
+        _checkForEndOfContent();
+      });
+    }
+  }
+
+  VideoFormat _getVideoFormat(String path) {
+    final extension = path.split('.').last.toLowerCase();
+    switch (extension) {
+      case 'm3u8':
+        return VideoFormat.hls;
+      case 'mpd':
+        return VideoFormat.dash;
+      case 'webm':
+      case 'avi':
+      case 'mp4':
+        return VideoFormat.other;
+      default:
+        return VideoFormat.other;
     }
   }
 
@@ -224,7 +246,23 @@ class MainVideoPlayerState extends State<MainVideoPlayer>
   }
 
   Future<void> _loadSubtitles() async {
-    if (widget.subtitleUrl != null && widget.subtitleUrl!.isNotEmpty) {
+    if (widget.isLocal && widget.localSubtitlePath != null) {
+      try {
+        final file = File(widget.localSubtitlePath!);
+        if (await file.exists()) {
+          final srt = await file.readAsString();
+          if (mounted) {
+            setState(() {
+              _subtitles = _parseSrt(srt);
+            });
+          }
+        } else {
+          debugPrint('Local subtitle file not found');
+        }
+      } catch (e) {
+        debugPrint('Failed to load local subtitles: $e');
+      }
+    } else if (widget.subtitleUrl != null && widget.subtitleUrl!.isNotEmpty) {
       try {
         final response = await http.get(Uri.parse(widget.subtitleUrl!));
         if (response.statusCode == 200) {
@@ -240,9 +278,6 @@ class MainVideoPlayerState extends State<MainVideoPlayer>
       } catch (e) {
         debugPrint('Failed to load network subtitles: $e');
       }
-    } else {
-      // Placeholder for downloaded subtitles (to be implemented later)
-      debugPrint('No subtitle URL provided; waiting for downloaded subtitles');
     }
   }
 
@@ -289,7 +324,7 @@ class MainVideoPlayerState extends State<MainVideoPlayer>
   void _startHideTimer() {
     _hideTimer?.cancel();
     _hideTimer = Timer(const Duration(seconds: 3), () {
-      if (mounted) {
+      if (mounted && !_isLocked) {
         setState(() {
           _showControls = false;
           if (_showNextEpisodeBar || _showRecommendationsBar)
@@ -300,7 +335,7 @@ class MainVideoPlayerState extends State<MainVideoPlayer>
   }
 
   void _toggleControls() {
-    if (!mounted) return;
+    if (!mounted || _isLocked) return;
     setState(() {
       _showControls = !_showControls;
       if (_recommendationTimer != null) {
@@ -328,6 +363,7 @@ class MainVideoPlayerState extends State<MainVideoPlayer>
     WidgetsBinding.instance.removeObserver(this);
     _hideTimer?.cancel();
     _recommendationTimer?.cancel();
+    _controller.removeListener(_videoListener);
     _controller.pause().then((_) => _controller.dispose());
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.portraitUp,
@@ -587,10 +623,10 @@ class MainVideoPlayerState extends State<MainVideoPlayer>
         });
         _fetchNextEpisode();
       } else if (!widget.isFullSeason && !_showRecommendationsBar) {
-       		{
+        setState(() {
           _showRecommendationsBar = true;
           _showControls = true;
-        }
+        });
         _fetchRecommendations();
       }
     }
@@ -699,6 +735,7 @@ class MainVideoPlayerState extends State<MainVideoPlayer>
       episodeFiles: widget.episodeFiles,
       similarMovies: widget.similarMovies,
       subtitleUrl: newSubtitleUrl ?? widget.subtitleUrl,
+      localSubtitlePath: widget.localSubtitlePath,
       isHls: isHls,
       isLocal: widget.isLocal,
     );

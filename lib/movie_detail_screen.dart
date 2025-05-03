@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'dart:ui';
 import 'dart:io';
-import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_downloader/flutter_downloader.dart';
@@ -19,6 +18,8 @@ import 'package:movie_app/tmdb_api.dart' as tmdb;
 import 'package:movie_app/streaming_service.dart';
 import 'package:visibility_detector/visibility_detector.dart';
 import 'package:movie_app/settings_provider.dart';
+import 'package:http/http.dart' as http;
+import 'package:movie_app/tv_show_episodes_section.dart';
 
 class MovieDetailScreen extends StatefulWidget {
   final Map<String, dynamic> movie;
@@ -107,6 +108,12 @@ class MovieDetailScreenState extends State<MovieDetailScreen> {
   }
 
   void _showDownloadOptionsModal(Map<String, dynamic> details) {
+    if (_isTvShow) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Please select an episode to download")),
+      );
+      return;
+    }
     showModalBottomSheet(
       context: context,
       shape: const RoundedRectangleBorder(
@@ -143,49 +150,147 @@ class MovieDetailScreenState extends State<MovieDetailScreen> {
         title: title,
         resolution: resolution,
         enableSubtitles: subtitles,
+        forDownload: true,
       );
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Failed to get streaming info: $e")),
+        SnackBar(content: Text("Failed to get download link: $e")),
       );
       return;
     }
 
-    final downloadUrl = streamingInfo['url'];
-    final urlType = streamingInfo['type'] ?? 'unknown';
-    debugPrint('Download URL: $downloadUrl, Type: $urlType');
+    final streamType = streamingInfo['type'] ?? 'm3u8';
+    final directory = Platform.isAndroid
+        ? (await getExternalStorageDirectory())!
+        : await getApplicationDocumentsDirectory();
+    final contentDir = Directory('${directory.path}/$tmdbId');
+    await contentDir.create(recursive: true);
 
-    if (downloadUrl == null || downloadUrl.isEmpty) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Download URL not available")),
-      );
-      return;
+    String? playlistContent = streamingInfo['playlist'];
+    String? streamUrl = streamingInfo['url'];
+    String baseUrl = '';
+
+    if (streamUrl != null && streamType == 'm3u8') {
+      try {
+        final decodedBytes = base64Decode(streamUrl);
+        final decodedString = utf8.decode(decodedBytes);
+        if (decodedString.startsWith('#EXTM3U')) {
+          playlistContent = decodedString;
+          streamUrl = null;
+        } else if (Uri.tryParse(decodedString)?.isAbsolute == true) {
+          streamUrl = decodedString;
+          final response = await http.get(Uri.parse(streamUrl));
+          if (response.statusCode == 200) {
+            playlistContent = response.body;
+          } else {
+            throw Exception('Failed to fetch M3U8 playlist');
+          }
+        }
+      } catch (e) {
+        debugPrint('Base64 decoding failed or not Base64: $e');
+        if (streamUrl != null && playlistContent == null) {
+          final response = await http.get(Uri.parse(streamUrl));
+          if (response.statusCode == 200) {
+            playlistContent = response.body;
+          } else {
+            throw Exception('Failed to fetch M3U8 playlist');
+          }
+        }
+      }
     }
 
-    if (await Permission.storage.request().isGranted) {
-      final directory = Platform.isAndroid
-          ? (await getExternalStorageDirectory())!
-          : await getApplicationDocumentsDirectory();
-      final fileName =
-          "${details['title'] ?? details['name']}-$resolution.${urlType == 'm3u8' ? 'mp4' : 'mp4'}";
-      final taskId = await FlutterDownloader.enqueue(
-        url: downloadUrl,
-        savedDir: directory.path,
-        fileName: fileName,
-        showNotification: true,
-        openFileFromNotification: true,
-      );
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Download started (Task ID: $taskId)")),
-      );
+    if (streamType == 'm3u8' && playlistContent != null) {
+      baseUrl = streamUrl != null
+          ? Uri.parse(streamUrl).resolve('.').toString()
+          : '';
+      final fileName = '$title-$resolution.m3u8';
+      final segmentDir = Directory('${contentDir.path}/segments');
+      await segmentDir.create(recursive: true);
+
+      final lines = playlistContent.split('\n');
+      final segmentUrls = <String>[];
+      for (var line in lines) {
+        if (line.trim().endsWith('.ts')) {
+          final segmentUrl = baseUrl.isNotEmpty
+              ? Uri.parse(baseUrl).resolve(line.trim()).toString()
+              : line.trim();
+          segmentUrls.add(segmentUrl);
+        }
+      }
+
+      if (await Permission.storage.request().isGranted) {
+        for (var i = 0; i < segmentUrls.length; i++) {
+          final segmentUrl = segmentUrls[i];
+          final segmentFile = 'segment_$i.ts';
+          await FlutterDownloader.enqueue(
+            url: segmentUrl,
+            savedDir: segmentDir.path,
+            fileName: segmentFile,
+            showNotification: false,
+          );
+        }
+
+        final modifiedPlaylist = lines.map((line) {
+          if (line.trim().endsWith('.ts')) {
+            final index =
+                segmentUrls.indexWhere((url) => url.endsWith(line.trim()));
+            return 'segments/segment_$index.ts';
+          }
+          return line;
+        }).join('\n');
+
+        final playlistFile = File('${contentDir.path}/$fileName');
+        await playlistFile.writeAsString(modifiedPlaylist);
+
+        await FlutterDownloader.enqueue(
+          url: 'file://${playlistFile.path}',
+          savedDir: contentDir.path,
+          fileName: fileName,
+          showNotification: true,
+          openFileFromNotification: true,
+        );
+
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Downloading $title (M3U8)")),
+        );
+      } else {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Storage permission not granted")),
+        );
+      }
     } else {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Storage permission not granted")),
-      );
+      if (streamUrl == null || streamUrl.isEmpty) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Download URL not available")),
+        );
+        return;
+      }
+
+      if (await Permission.storage.request().isGranted) {
+        final fileName = streamType == 'mp4'
+            ? '$title-$resolution.mp4'
+            : '$title-$resolution.m3u8';
+        final taskId = await FlutterDownloader.enqueue(
+          url: streamUrl,
+          savedDir: contentDir.path,
+          fileName: fileName,
+          showNotification: true,
+          openFileFromNotification: true,
+        );
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Download started (Task ID: $taskId)")),
+        );
+      } else {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Storage permission not granted")),
+        );
+      }
     }
   }
 
@@ -292,6 +397,20 @@ class MovieDetailScreenState extends State<MovieDetailScreen> {
           enableSubtitles: subtitles,
         );
       }
+
+      if (streamingInfo['url'] != null && streamingInfo['type'] == 'm3u8') {
+        try {
+          final decodedBytes = base64Decode(streamingInfo['url']!);
+          final decodedString = utf8.decode(decodedBytes);
+          if (Uri.tryParse(decodedString)?.isAbsolute == true) {
+            streamingInfo['url'] = decodedString;
+          } else if (decodedString.startsWith('#EXTM3U')) {
+            streamingInfo['url'] = decodedString;
+          }
+        } catch (e) {
+          debugPrint('Base64 decoding for streaming URL failed: $e');
+        }
+      }
     } catch (e) {
       debugPrint('Error fetching streaming info: $e');
       if (mounted) {
@@ -338,8 +457,8 @@ class MovieDetailScreenState extends State<MovieDetailScreen> {
             isFullSeason: isTvShow,
             episodeFiles: episodeFiles,
             similarMovies: _similarMovies,
-            subtitleUrl: subtitleUrl, // Pass subtitle URL
-            isHls: urlType == 'm3u8', // Indicate HLS format
+            subtitleUrl: subtitleUrl,
+            isHls: urlType == 'm3u8',
           ),
         ),
       );
@@ -1144,573 +1263,40 @@ class LoadingDialog extends StatefulWidget {
 
 class _LoadingDialogState extends State<LoadingDialog> {
   bool _showSecondMessage = false;
-  Timer? _timer;
 
   @override
   void initState() {
     super.initState();
-    _timer = Timer(const Duration(seconds: 30), () {
-      if (mounted) setState(() => _showSecondMessage = true);
+    Future.delayed(const Duration(seconds: 3), () {
+      if (mounted) {
+        setState(() {
+          _showSecondMessage = true;
+        });
+      }
     });
   }
 
   @override
-  void dispose() {
-    _timer?.cancel();
-    debugPrint('LoadingDialog disposed, timer canceled');
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final settings = Provider.of<SettingsProvider>(context);
-    return Dialog(
-      backgroundColor: Colors.black.withOpacity(0.8),
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            CircularProgressIndicator(color: settings.accentColor),
-            const SizedBox(height: 16),
-            const Text(
-              "Preparing your content...",
-              style: TextStyle(color: Colors.white),
-              textAlign: TextAlign.center,
-            ),
-            if (_showSecondMessage) ...[
-              const SizedBox(height: 12),
-              const Text(
-                "The app is in its inception stage,\nso some content might not be available yet.",
-                style: TextStyle(color: Colors.white70),
-                textAlign: TextAlign.center,
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class TVShowEpisodesSection extends StatefulWidget {
-  final int tvId;
-  final List<dynamic> seasons;
-  final String tvShowName;
-
-  const TVShowEpisodesSection({
-    Key? key,
-    required this.tvId,
-    required this.seasons,
-    required this.tvShowName,
-  }) : super(key: key);
-
-  @override
-  TVShowEpisodesSectionState createState() => TVShowEpisodesSectionState();
-}
-
-class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
-  final Map<int, List<dynamic>> _episodesCache = {};
-  late int _selectedSeasonNumber;
-  bool _isLoading = false;
-  bool _isVisible = false;
-
-  @override
-  void initState() {
-    super.initState();
-    debugPrint(
-        'TVShowEpisodesSectionState initState called with tvId: ${widget.tvId}');
-    _selectedSeasonNumber = widget.seasons.isNotEmpty
-        ? (widget.seasons.first['season_number'] as int? ?? 1)
-        : 1;
-  }
-
-  @override
-  void dispose() {
-    debugPrint('TVShowEpisodesSectionState dispose called');
-    super.dispose();
-  }
-
-  Future<void> _fetchEpisodes(int seasonNumber) async {
-    if (_episodesCache[seasonNumber] != null || _isLoading) return;
-    setState(() => _isLoading = true);
-    try {
-      debugPrint('Fetching episodes for season $seasonNumber');
-      final seasonDetails =
-          await tmdb.TMDBApi.fetchTVSeasonDetails(widget.tvId, seasonNumber);
-      if (!mounted) return;
-      setState(() {
-        _episodesCache[seasonNumber] = seasonDetails['episodes'] ?? [];
-        _isLoading = false;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _episodesCache[seasonNumber] = [];
-        _isLoading = false;
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to load episodes: $e')),
-      );
-    }
-  }
-
-  void _showLoadingDialog() {
-    debugPrint('Showing episode loading dialog');
-    if (!mounted) return;
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => const EpisodeLoadingDialog(),
-    );
-  }
-
-  void _showEpisodePlayOptionsModal(
-      Map<String, dynamic> episode, int seasonNumber) {
-    debugPrint(
-        'Showing episode play options modal for episode: ${episode['name']}');
-    if (!mounted) return;
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
+    return AlertDialog(
       backgroundColor: Colors.black87,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (modalContext) {
-        return _EpisodePlayOptionsModal(
-          onConfirm: (resolution, subtitles) async {
-            debugPrint(
-                'Episode play options confirmed: resolution=$resolution, subtitles=$subtitles');
-            Navigator.pop(modalContext);
-            _showLoadingDialog();
-
-            final episodeNumber =
-                (episode['episode_number'] as num?)?.toInt() ?? 1;
-            final episodeName = episode['name'] as String? ?? 'Untitled';
-
-            Map<String, String> streamingInfo = {};
-            try {
-              streamingInfo = await StreamingService.getStreamingLink(
-                tmdbId: widget.tvId.toString(),
-                title: widget.tvShowName.isNotEmpty
-                    ? widget.tvShowName
-                    : episodeName,
-                season: seasonNumber,
-                episode: episodeNumber,
-                resolution: resolution,
-                enableSubtitles: subtitles,
-              );
-            } catch (e, stacktrace) {
-              debugPrint("Streaming fetch error: $e");
-              debugPrintStack(stackTrace: stacktrace);
-              if (mounted) {
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text("Failed to get streaming info: $e")),
-                );
-              }
-              return;
-            }
-
-            if (!mounted) {
-              debugPrint('Context not mounted, aborting episode streaming');
-              Navigator.pop(context);
-              return;
-            }
-            Navigator.pop(context);
-
-            final streamUrl = streamingInfo['url'] ?? '';
-            final urlType = streamingInfo['type'] ?? 'unknown';
-            final subtitleUrl = streamingInfo['subtitleUrl'];
-            debugPrint(
-                'Episode stream URL: $streamUrl, Type: $urlType, Subtitle: $subtitleUrl');
-
-            if (streamUrl.isEmpty) {
-              debugPrint('Episode stream URL is empty');
-              if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                      content: Text("Streaming details not available")),
-                );
-              }
-              return;
-            }
-
-            debugPrint('Navigating to MainVideoPlayer for episode');
-            if (mounted) {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => MainVideoPlayer(
-                    videoPath: streamUrl,
-                    title: streamingInfo['title'] ?? episodeName,
-                    isFullSeason: true,
-                    episodeFiles: [],
-                    similarMovies: [],
-                    subtitleUrl: subtitleUrl,
-                    isHls: urlType == 'm3u8',
-                  ),
-                ),
-              );
-            }
-          },
-        );
-      },
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    debugPrint('TVShowEpisodesSectionState build called');
-    if (widget.seasons.isEmpty) return const SizedBox.shrink();
-
-    return Consumer<SettingsProvider>(
-      builder: (context, settings, child) {
-        return VisibilityDetector(
-          key: ValueKey('episodes_${widget.tvId}'),
-          onVisibilityChanged: (info) {
-            if (info.visibleFraction > 0 && !_isVisible && !_isLoading) {
-              _isVisible = true;
-              _fetchEpisodes(_selectedSeasonNumber);
-            }
-          },
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Row(
-                  children: [
-                    const Text(
-                      'Episodes',
-                      style: TextStyle(
-                          fontSize: 22,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white),
-                    ),
-                    const Spacer(),
-                    DropdownButton<int>(
-                      value: _selectedSeasonNumber,
-                      dropdownColor: Colors.black87,
-                      style: const TextStyle(color: Colors.white),
-                      iconEnabledColor: settings.accentColor,
-                      items: widget.seasons
-                          .map<DropdownMenuItem<int>>(
-                              (season) => DropdownMenuItem(
-                                    value: season['season_number'] as int? ?? 0,
-                                    child: Text(
-                                        'Season ${season['season_number'] ?? 0}'),
-                                  ))
-                          .toList(),
-                      onChanged: (value) {
-                        if (value != null && mounted) {
-                          setState(() {
-                            _selectedSeasonNumber = value;
-                            _fetchEpisodes(value);
-                          });
-                        }
-                      },
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 8),
-              _isLoading
-                  ? Center(
-                      child: CircularProgressIndicator(
-                          color: settings.accentColor))
-                  : _buildEpisodesList(),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildEpisodesList() {
-    final episodes = _episodesCache[_selectedSeasonNumber] ?? [];
-    if (episodes.isEmpty && !_isLoading) {
-      return const Padding(
-        padding: EdgeInsets.all(16),
-        child: Text('No episodes available.',
-            style: TextStyle(color: Colors.white70)),
-      );
-    }
-
-    return ListView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      itemCount: episodes.length,
-      itemBuilder: (context, index) {
-        final episode = episodes[index];
-        return _EpisodeCard(
-          episode: episode,
-          seasonNumber: _selectedSeasonNumber,
-          onTap: () =>
-              _showEpisodePlayOptionsModal(episode, _selectedSeasonNumber),
-        );
-      },
-    );
-  }
-}
-
-class _EpisodeCard extends StatelessWidget {
-  final Map<String, dynamic> episode;
-  final int seasonNumber;
-  final VoidCallback onTap;
-
-  const _EpisodeCard({
-    required this.episode,
-    required this.seasonNumber,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final settings = Provider.of<SettingsProvider>(context);
-    final episodeNumber =
-        (episode['episode_number'] as num?)?.toString().padLeft(2, '0') ?? '01';
-    final episodeName = episode['name'] as String? ?? 'Untitled';
-    final episodeOverview = episode['overview'] as String? ?? '';
-    final stillPath = episode['still_path'] as String?;
-    final runtime = (episode['runtime'] as int?) ?? 0;
-
-    return GestureDetector(
-      onTap: onTap,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-          child: Container(
-            margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: settings.accentColor.withOpacity(0.2),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Colors.white.withOpacity(0.125)),
-            ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: stillPath != null
-                      ? CachedNetworkImage(
-                          imageUrl: "https://image.tmdb.org/t/p/w300$stillPath",
-                          width: 120,
-                          height: 70,
-                          fit: BoxFit.cover,
-                          placeholder: (context, url) => Shimmer.fromColors(
-                            baseColor: Colors.grey[800]!,
-                            highlightColor: Colors.grey[600]!,
-                            child: Container(
-                              width: 120,
-                              height: 70,
-                              color: Colors.grey[800],
-                            ),
-                          ),
-                          errorWidget: (context, url, error) => Container(
-                            width: 120,
-                            height: 70,
-                            color: Colors.grey,
-                            child: const Icon(Icons.error, color: Colors.red),
-                          ),
-                        )
-                      : Container(
-                          width: 120,
-                          height: 70,
-                          color: Colors.grey,
-                          child: Icon(Icons.tv, color: settings.accentColor),
-                        ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Episode $episodeNumber: $episodeName',
-                        style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        episodeOverview,
-                        style: const TextStyle(
-                            fontSize: 14, color: Colors.white70),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      if (runtime > 0)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 4),
-                          child: Text(
-                            '${runtime}m',
-                            style: const TextStyle(
-                                fontSize: 14, color: Colors.white60),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _EpisodePlayOptionsModal extends StatefulWidget {
-  final void Function(String, bool) onConfirm;
-
-  const _EpisodePlayOptionsModal({required this.onConfirm});
-
-  @override
-  _EpisodePlayOptionsModalState createState() =>
-      _EpisodePlayOptionsModalState();
-}
-
-class _EpisodePlayOptionsModalState extends State<_EpisodePlayOptionsModal> {
-  String _resolution = "720p";
-  bool _subtitles = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final settings = Provider.of<SettingsProvider>(context);
-    return Container(
-      padding: EdgeInsets.only(
-        bottom: MediaQuery.of(context).viewInsets.bottom,
-        top: 16,
-        left: 16,
-        right: 16,
-      ),
-      height: MediaQuery.of(context).size.height * 0.5,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          const Center(
-            child: Text(
-              "Play Options",
-              style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white),
-            ),
-          ),
+          const CircularProgressIndicator(),
           const SizedBox(height: 16),
-          const Text("Select Resolution:",
-              style: TextStyle(fontSize: 16, color: Colors.white)),
-          DropdownButton<String>(
-            value: _resolution,
-            dropdownColor: Colors.black87,
-            iconEnabledColor: settings.accentColor,
-            items: const [
-              DropdownMenuItem(
-                  value: "480p",
-                  child: Text("480p", style: TextStyle(color: Colors.white))),
-              DropdownMenuItem(
-                  value: "720p",
-                  child: Text("720p", style: TextStyle(color: Colors.white))),
-              DropdownMenuItem(
-                  value: "1080p",
-                  child: Text("1080p", style: TextStyle(color: Colors.white))),
-            ],
-            onChanged: (value) => setState(() => _resolution = value!),
+          const Text(
+            "Preparing your content...",
+            style: TextStyle(color: Colors.white),
           ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              const Text("Enable Subtitles:",
-                  style: TextStyle(fontSize: 16, color: Colors.white)),
-              Switch(
-                value: _subtitles,
-                activeColor: settings.accentColor,
-                onChanged: (value) => setState(() => _subtitles = value),
-              ),
-            ],
-          ),
-          const Spacer(),
-          Center(
-            child: ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                  backgroundColor: settings.accentColor),
-              onPressed: () {
-                debugPrint(
-                    'Episode Play Now button pressed: resolution=$_resolution, subtitles=$_subtitles');
-                widget.onConfirm(_resolution, _subtitles);
-              },
-              child:
-                  const Text("Play Now", style: TextStyle(color: Colors.black)),
-            ),
-          ),
-          const SizedBox(height: 16),
-        ],
-      ),
-    );
-  }
-}
-
-class EpisodeLoadingDialog extends StatefulWidget {
-  const EpisodeLoadingDialog({Key? key}) : super(key: key);
-
-  @override
-  EpisodeLoadingDialogState createState() => EpisodeLoadingDialogState();
-}
-
-class EpisodeLoadingDialogState extends State<EpisodeLoadingDialog> {
-  bool showSecondMessage = false;
-  Timer? _timer;
-
-  @override
-  void initState() {
-    super.initState();
-    debugPrint('EpisodeLoadingDialogState initState called');
-    _timer = Timer(const Duration(seconds: 3), () {
-      if (mounted) setState(() => showSecondMessage = true);
-    });
-  }
-
-  @override
-  void dispose() {
-    debugPrint('EpisodeLoadingDialogState dispose called');
-    _timer?.cancel();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final settings = Provider.of<SettingsProvider>(context);
-    return Dialog(
-      backgroundColor: Colors.black.withOpacity(0.8),
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            CircularProgressIndicator(color: settings.accentColor),
-            const SizedBox(height: 16),
+          if (_showSecondMessage) ...[
+            const SizedBox(height: 8),
             const Text(
-              "Preparing your episode...",
-              style: TextStyle(color: Colors.white),
-              textAlign: TextAlign.center,
+              "This may take a moment.",
+              style: TextStyle(color: Colors.white70),
             ),
-            if (showSecondMessage) ...[
-              const SizedBox(height: 12),
-              const Text(
-                "The app is in its inception stage,\nso some TV shows and episodes might not be available.",
-                style: TextStyle(color: Colors.white70),
-                textAlign: TextAlign.center,
-              ),
-            ],
           ],
-        ),
+        ],
       ),
     );
   }

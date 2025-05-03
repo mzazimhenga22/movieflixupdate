@@ -3,14 +3,20 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:logger/logger.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:flutter/material.dart';
-import 'package:movie_app/downloads_screen.dart';
-import 'package:permission_handler/permission_handler.dart';
-import 'package:flutter_downloader/flutter_downloader.dart';
+
+/// Thrown when streaming data is unavailable or invalid.
+class StreamingNotAvailableException implements Exception {
+  final String message;
+  StreamingNotAvailableException(this.message);
+
+  @override
+  String toString() => 'StreamingNotAvailableException: $message';
+}
 
 class StreamingService {
   static final _logger = Logger();
 
+  /// Retrieves a streaming link or playlist for a movie or TV show.
   static Future<Map<String, String>> getStreamingLink({
     required String tmdbId,
     required String title,
@@ -18,21 +24,25 @@ class StreamingService {
     required bool enableSubtitles,
     int? season,
     int? episode,
+    String? seasonTmdbId,
+    String? episodeTmdbId,
+    bool forDownload = false,
   }) async {
     _logger.i('Calling backend for streaming link: $tmdbId');
 
     final url = Uri.parse('https://moviflxpro.onrender.com/media-links');
     final isShow = season != null && episode != null;
-    final body = {
+
+    final body = <String, String>{
       'type': isShow ? 'show' : 'movie',
       'tmdbId': tmdbId,
       'title': title,
-      'releaseYear': DateTime.now().year,
+      'releaseYear': DateTime.now().year.toString(),
       if (isShow) ...{
-        'seasonNumber': season,
-        'seasonTmdbId': tmdbId,
-        'episodeNumber': episode,
-        'episodeTmdbId': tmdbId,
+        'seasonNumber': season.toString(),
+        'seasonTmdbId': seasonTmdbId ?? tmdbId,
+        'episodeNumber': episode.toString(),
+        'episodeTmdbId': episodeTmdbId ?? tmdbId,
       }
     };
 
@@ -45,149 +55,123 @@ class StreamingService {
 
       if (response.statusCode != 200) {
         _logger.e('Backend error: ${response.statusCode} ${response.body}');
-        throw Exception('Failed to get streaming link');
+        throw StreamingNotAvailableException(
+          'Failed to get streaming link: ${response.statusCode}',
+        );
       }
 
-      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final dynamic decoded = jsonDecode(response.body);
+      if (decoded is! Map<String, dynamic>) {
+        _logger.e('Invalid response format: $decoded');
+        throw StreamingNotAvailableException('Invalid response format.');
+      }
+      final data = decoded;
       _logger.d('Raw backend JSON: $data');
 
       List<Map<String, dynamic>> streamsList;
       if (data['streams'] != null) {
-        streamsList = List<Map<String, dynamic>>.from(data['streams']);
+        streamsList = List<Map<String, dynamic>>.from(data['streams'] as List);
       } else if (data['stream'] != null) {
         streamsList = [
           {
-            'sourceId': data['sourceId'],
-            'stream': Map<String, dynamic>.from(data['stream']),
+            'sourceId': data['sourceId']?.toString() ?? 'unknown',
+            'stream': Map<String, dynamic>.from(data['stream'] as Map<String, dynamic>),
           }
         ];
       } else {
-        streamsList = [];
+        _logger.w('No streams found: $data');
+        throw StreamingNotAvailableException('No streaming links available.');
       }
 
       if (streamsList.isEmpty) {
-        _logger.w('No streams found in backend response: $data');
-        throw Exception('No streaming links available');
+        _logger.w('Streams list is empty.');
+        throw StreamingNotAvailableException('No streaming links available.');
       }
 
-      final streamData = streamsList[0]['stream'] as Map<String, dynamic>;
+      final selected = streamsList.firstWhere(
+        (s) => s['stream'] != null,
+        orElse: () {
+          _logger.w('No valid stream in list: $streamsList');
+          throw StreamingNotAvailableException('No valid stream available.');
+        },
+      );
 
-      String streamUrl = '';
-      String streamType = 'm3u8';
+      final streamData = selected['stream'] as Map<String, dynamic>;
+
+      String? playlist;
+      String streamType;
+      late String streamUrl;
       String subtitleUrl = '';
 
       final playlistEncoded = streamData['playlist'] as String?;
       if (playlistEncoded != null &&
           playlistEncoded.startsWith('data:application/vnd.apple.mpegurl;base64,')) {
         final base64Part = playlistEncoded.split(',')[1];
-        final decodedPlaylist = utf8.decode(base64Decode(base64Part));
-        _logger.i('Decoded M3U8 playlist:');
-        _logger.i(decodedPlaylist);
+        playlist = utf8.decode(base64Decode(base64Part));
+        streamType = 'm3u8';
 
         final dir = await getTemporaryDirectory();
         final file = File('${dir.path}/$tmdbId-playlist.m3u8');
-        await file.writeAsString(decodedPlaylist);
+        await file.writeAsString(playlist);
         streamUrl = file.path;
-
-        streamType = 'm3u8';
       } else {
-        streamUrl = streamData['url'] ?? '';
-        if (streamUrl.isEmpty) {
+        final urlValue = streamData['url']?.toString();
+        if (urlValue == null || urlValue.isEmpty) {
           _logger.e('No stream URL provided: $streamData');
-          throw Exception('No stream URL');
+          throw StreamingNotAvailableException('No stream URL available.');
         }
+        streamUrl = urlValue;
+
         if (streamUrl.endsWith('.m3u8')) {
           streamType = 'm3u8';
+          if (forDownload) {
+            final playlistResponse = await http.get(Uri.parse(streamUrl));
+            if (playlistResponse.statusCode == 200) {
+              playlist = playlistResponse.body;
+              final dir = await getTemporaryDirectory();
+              final file = File('${dir.path}/$tmdbId-playlist.m3u8');
+              await file.writeAsString(playlist);
+              streamUrl = file.path;
+            } else {
+              _logger.e(
+                'Failed to fetch M3U8 playlist: ${playlistResponse.statusCode}',
+              );
+              throw StreamingNotAvailableException('Failed to fetch playlist.');
+            }
+          }
         } else if (streamUrl.endsWith('.mp4')) {
           streamType = 'mp4';
         } else {
-          streamType = streamData['type'] ?? 'm3u8';
+          streamType = streamData['type']?.toString() ?? 'm3u8';
         }
       }
 
-      if (enableSubtitles && streamData['captions'] != null) {
-        final caps = streamData['captions'] as List<dynamic>;
-        if (caps.isNotEmpty) {
-          final cap = caps.firstWhere(
-            (c) => c['language'] == 'en',
-            orElse: () => caps[0],
-          );
-          subtitleUrl = cap['url'] ?? '';
-        }
+      final captionsList = streamData['captions'] as List<dynamic>?;
+      if (enableSubtitles && captionsList != null && captionsList.isNotEmpty) {
+        final selectedCap = captionsList.firstWhere(
+          (c) => c['language'] == 'en',
+          orElse: () => captionsList.first,
+        );
+        subtitleUrl = selectedCap['url']?.toString() ?? '';
       }
 
-      return {
-        'url': streamUrl,
-        'type': streamType,
+      final result = <String, String>{
         'title': title,
-        'subtitleUrl': subtitleUrl,
+        'type': streamType,
+        'url': streamUrl,
       };
+      if (playlist != null) {
+        result['playlist'] = playlist;
+      }
+      if (subtitleUrl.isNotEmpty) {
+        result['subtitleUrl'] = subtitleUrl;
+      }
+
+      _logger.i('Streaming link retrieved: $result');
+      return result;
     } catch (e, st) {
-      _logger.e('Error fetching stream', error: e, stackTrace: st);
-      throw Exception('Failed to retrieve stream');
-    }
-  }
-
-  static Future<void> prepareDownload({
-    required BuildContext context,
-    required String tmdbId,
-    required String title,
-    required String resolution,
-    required bool subtitles,
-    int? season,
-    int? episode,
-  }) async {
-    try {
-      final streamingInfo = await getStreamingLink(
-        tmdbId: tmdbId,
-        title: title,
-        resolution: resolution,
-        enableSubtitles: subtitles,
-        season: season,
-        episode: episode,
-      );
-      final downloadUrl = streamingInfo['url'];
-      final urlType = streamingInfo['type'] ?? 'unknown';
-
-      if (downloadUrl == null || downloadUrl.isEmpty) {
-        throw Exception('Download URL not available');
-      }
-
-      if (await Permission.storage.request().isGranted) {
-        final directory = Platform.isAndroid
-            ? (await getExternalStorageDirectory())!
-            : await getApplicationDocumentsDirectory();
-        final fileName =
-            "${title.replaceAll(RegExp(r'[^\w\s-]'), '')}-$resolution.${urlType == 'm3u8' ? 'mp4' : urlType}";
-        final taskId = await FlutterDownloader.enqueue(
-          url: downloadUrl,
-          savedDir: directory.path,
-          fileName: fileName,
-          showNotification: true,
-          openFileFromNotification: true,
-        );
-
-        if (context.mounted) {
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(
-              builder: (context) => DownloadsScreen(taskId: taskId),
-            ),
-          );
-        }
-      } else {
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("Storage permission not granted")),
-          );
-        }
-      }
-    } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Download failed: $e")),
-        );
-      }
+      _logger.e('Error fetching stream for tmdbId: $tmdbId', error: e, stackTrace: st);
+      rethrow;
     }
   }
 }
