@@ -1,6 +1,8 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_downloader/flutter_downloader.dart';
-import 'dart:io';
+import 'package:path_provider/path_provider.dart';
+import 'package:http/http.dart' as http;
 import 'package:movie_app/main_videoplayer.dart';
 
 class DownloadsScreen extends StatefulWidget {
@@ -36,14 +38,14 @@ class DownloadsScreenState extends State<DownloadsScreen> {
       taskId: task.taskId,
       shouldDeleteContent: true,
     );
-    final file = File('${task.savedDir}/${task.filename}');
-    if (file.existsSync()) {
-      await file.delete();
+    final dir = Directory(task.savedDir);
+    if (await dir.exists()) {
+      await dir.delete(recursive: true);
     }
     _refresh();
   }
 
-  Future<void> _playVideo(String savedDir, String filename, String title) async {
+  Future<void> _playVideo(String savedDir, String filename, String title, bool isHls) async {
     final filePath = '$savedDir/$filename';
     if (await File(filePath).exists()) {
       if (mounted) {
@@ -53,7 +55,7 @@ class DownloadsScreenState extends State<DownloadsScreen> {
             builder: (context) => MainVideoPlayer(
               videoPath: filePath,
               title: title,
-              isHls: false,
+              isHls: isHls,
               isLocal: true,
             ),
           ),
@@ -137,8 +139,9 @@ class DownloadsScreenState extends State<DownloadsScreen> {
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   itemBuilder: (context, index) {
                     final task = movies[index];
+                    final isHls = task.filename?.endsWith('.m3u8') ?? false;
                     return GestureDetector(
-                      onTap: () => _playVideo(task.savedDir, task.filename!, task.filename!),
+                      onTap: () => _playVideo(task.savedDir, task.filename!, task.filename!, isHls),
                       child: Stack(
                         children: [
                           Container(
@@ -188,6 +191,7 @@ class DownloadsScreenState extends State<DownloadsScreen> {
                   return ExpansionTile(
                     title: Text(entry.key, style: const TextStyle(fontWeight: FontWeight.bold)),
                     children: entry.value.map((task) {
+                      final isHls = task.filename?.endsWith('.m3u8') ?? false;
                       return ListTile(
                         leading: const Icon(Icons.video_library),
                         title: Text(task.filename ?? ''),
@@ -196,7 +200,7 @@ class DownloadsScreenState extends State<DownloadsScreen> {
                           icon: const Icon(Icons.delete),
                           onPressed: () => _deleteTask(task),
                         ),
-                        onTap: () => _playVideo(task.savedDir, task.filename!, task.filename!),
+                        onTap: () => _playVideo(task.savedDir, task.filename!, task.filename!, isHls),
                       );
                     }).toList(),
                   );
