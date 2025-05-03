@@ -146,6 +146,8 @@ class _ProfileSelectionScreenState extends State<ProfileSelectionScreen> {
 
   Future<void> _loadCurrentUserAndProfiles() async {
     try {
+      await AuthDatabase.instance
+          .initialize(); // Ensure database is initialized
       final user = _auth.currentUser;
       if (user == null) {
         debugPrint('ℹ️ No user signed in');
@@ -417,7 +419,7 @@ class _ProfileSelectionScreenState extends State<ProfileSelectionScreen> {
                   await AuthDatabase.instance.updateProfile(profile);
                   await _firestore
                       .collection('profiles')
-                      .doc(profile['id'])
+                      .doc(profile['id'] as String)
                       .update({'avatar': newUrl});
                   Navigator.pop(context);
                   await _refreshProfiles();
@@ -766,5 +768,6 @@ class _ProfileSelectionScreenState extends State<ProfileSelectionScreen> {
     );
   }
 }
+
 
 
