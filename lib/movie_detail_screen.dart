@@ -19,6 +19,7 @@ import 'package:movie_app/tmdb_api.dart' as tmdb;
 import 'package:movie_app/streaming_service.dart';
 import 'package:visibility_detector/visibility_detector.dart';
 import 'package:movie_app/settings_provider.dart';
+import 'package:http/http.dart' as http;
 
 class MovieDetailScreen extends StatefulWidget {
   final Map<String, dynamic> movie;
@@ -107,6 +108,12 @@ class MovieDetailScreenState extends State<MovieDetailScreen> {
   }
 
   void _showDownloadOptionsModal(Map<String, dynamic> details) {
+    if (_isTvShow) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Please select an episode to download")),
+      );
+      return;
+    }
     showModalBottomSheet(
       context: context,
       shape: const RoundedRectangleBorder(
@@ -143,49 +150,151 @@ class MovieDetailScreenState extends State<MovieDetailScreen> {
         title: title,
         resolution: resolution,
         enableSubtitles: subtitles,
+        forDownload: true,
       );
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Failed to get streaming info: $e")),
+        SnackBar(content: Text("Failed to get download link: $e")),
       );
       return;
     }
 
-    final downloadUrl = streamingInfo['url'];
-    final urlType = streamingInfo['type'] ?? 'unknown';
-    debugPrint('Download URL: $downloadUrl, Type: $urlType');
+    final streamType = streamingInfo['type'] ?? 'm3u8';
+    final directory = Platform.isAndroid
+        ? (await getExternalStorageDirectory())!
+        : await getApplicationDocumentsDirectory();
+    final contentDir = Directory('${directory.path}/$tmdbId');
+    await contentDir.create(recursive: true);
 
-    if (downloadUrl == null || downloadUrl.isEmpty) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Download URL not available")),
-      );
-      return;
+    String? playlistContent = streamingInfo['playlist'];
+    String? streamUrl = streamingInfo['url'];
+    String baseUrl = '';
+
+    // Check if the URL is Base64-encoded
+    if (streamUrl != null && streamType == 'm3u8') {
+      try {
+        // Try decoding the URL as Base64
+        final decodedBytes = base64Decode(streamUrl);
+        final decodedString = utf8.decode(decodedBytes);
+        if (decodedString.startsWith('#EXTM3U')) {
+          // If decoded string is an M3U8 playlist
+          playlistContent = decodedString;
+          streamUrl = null; // No URL needed since we have the playlist
+        } else if (Uri.tryParse(decodedString)?.isAbsolute == true) {
+          // If decoded string is a valid URL
+          streamUrl = decodedString;
+          final response = await http.get(Uri.parse(streamUrl));
+          if (response.statusCode == 200) {
+            playlistContent = response.body;
+          } else {
+            throw Exception('Failed to fetch M3U8 playlist');
+          }
+        }
+      } catch (e) {
+        debugPrint('Base64 decoding failed or not Base64: $e');
+        // If not Base64 or decoding fails, treat as regular URL
+        if (streamUrl != null && playlistContent == null) {
+          final response = await http.get(Uri.parse(streamUrl));
+          if (response.statusCode == 200) {
+            playlistContent = response.body;
+          } else {
+            throw Exception('Failed to fetch M3U8 playlist');
+          }
+        }
+      }
     }
 
-    if (await Permission.storage.request().isGranted) {
-      final directory = Platform.isAndroid
-          ? (await getExternalStorageDirectory())!
-          : await getApplicationDocumentsDirectory();
-      final fileName =
-          "${details['title'] ?? details['name']}-$resolution.${urlType == 'm3u8' ? 'mp4' : 'mp4'}";
-      final taskId = await FlutterDownloader.enqueue(
-        url: downloadUrl,
-        savedDir: directory.path,
-        fileName: fileName,
-        showNotification: true,
-        openFileFromNotification: true,
-      );
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Download started (Task ID: $taskId)")),
-      );
+    if (streamType == 'm3u8' && playlistContent != null) {
+      baseUrl = streamUrl != null
+          ? Uri.parse(streamUrl).resolve('.').toString()
+          : '';
+      final fileName = '$title-$resolution.m3u8';
+      final segmentDir = Directory('${contentDir.path}/segments');
+      await segmentDir.create(recursive: true);
+
+      final lines = playlistContent.split('\n');
+      final segmentUrls = <String>[];
+      for (var line in lines) {
+        if (line.trim().endsWith('.ts')) {
+          final segmentUrl = baseUrl.isNotEmpty
+              ? Uri.parse(baseUrl).resolve(line.trim()).toString()
+              : line.trim();
+          segmentUrls.add(segmentUrl);
+        }
+      }
+
+      if (await Permission.storage.request().isGranted) {
+        for (var i = 0; i < segmentUrls.length; i++) {
+          final segmentUrl = segmentUrls[i];
+          final segmentFile = 'segment_$i.ts';
+          await FlutterDownloader.enqueue(
+            url: segmentUrl,
+            savedDir: segmentDir.path,
+            fileName: segmentFile,
+            showNotification: false,
+          );
+        }
+
+        final modifiedPlaylist = lines.map((line) {
+          if (line.trim().endsWith('.ts')) {
+            final index = segmentUrls.indexWhere((url) => url.endsWith(line.trim()));
+            return 'segments/segment_$index.ts';
+          }
+          return line;
+        }).join('\n');
+
+        final playlistFile = File('${contentDir.path}/$fileName');
+        await playlistFile.writeAsString(modifiedPlaylist);
+
+        await FlutterDownloader.enqueue(
+          url: 'file://${playlistFile.path}',
+          savedDir: contentDir.path,
+          fileName: fileName,
+          showNotification: true,
+          openFileFromNotification: true,
+        );
+
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Downloading $title (M3U8)")),
+        );
+      } else {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Storage permission not granted")),
+        );
+      }
     } else {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Storage permission not granted")),
-      );
+      if (streamUrl == null || streamUrl.isEmpty) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Download URL not available")),
+        );
+        return;
+      }
+
+      if (await Permission.storage.request().isGranted) {
+        final fileName = streamType == 'mp4'
+            ? '$title-$resolution.mp4'
+            : '$title-$resolution.m3u8';
+        final taskId = await FlutterDownloader.enqueue(
+          url: streamUrl,
+          savedDir: contentDir.path,
+          fileName: fileName,
+          showNotification: true,
+          openFileFromNotification: true,
+        );
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Download started (Task ID: $taskId)")),
+        );
+      } else {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Storage permission not granted")),
+        );
+      }
     }
   }
 
@@ -292,6 +401,22 @@ class MovieDetailScreenState extends State<MovieDetailScreen> {
           enableSubtitles: subtitles,
         );
       }
+
+      // Handle Base64-encoded URL for streaming
+      if (streamingInfo['url'] != null && streamingInfo['type'] == 'm3u8') {
+        try {
+          final decodedBytes = base64Decode(streamingInfo['url']!);
+          final decodedString = utf8.decode(decodedBytes);
+          if (Uri.tryParse(decodedString)?.isAbsolute == true) {
+            streamingInfo['url'] = decodedString;
+          } else if (decodedString.startsWith('#EXTM3U')) {
+            streamingInfo['url'] = decodedString; // Treat as direct playlist content
+          }
+        } catch (e) {
+          debugPrint('Base64 decoding for streaming URL failed: $e');
+          // Proceed with original URL if decoding fails
+        }
+      }
     } catch (e) {
       debugPrint('Error fetching streaming info: $e');
       if (mounted) {
@@ -338,8 +463,8 @@ class MovieDetailScreenState extends State<MovieDetailScreen> {
             isFullSeason: isTvShow,
             episodeFiles: episodeFiles,
             similarMovies: _similarMovies,
-            subtitleUrl: subtitleUrl, // Pass subtitle URL
-            isHls: urlType == 'm3u8', // Indicate HLS format
+            subtitleUrl: subtitleUrl,
+            isHls: urlType == 'm3u8',
           ),
         ),
       );
@@ -1265,6 +1390,185 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
     );
   }
 
+  Future<void> _downloadEpisode(
+    Map<String, dynamic> episode,
+    int seasonNumber,
+    String resolution,
+    bool subtitles,
+  ) async {
+    final episodeNumber = (episode['episode_number'] as num?)?.toInt() ?? 1;
+    final episodeName = episode['name'] as String? ?? 'Untitled';
+
+    _showLoadingDialog();
+
+    Map<String, String> streamingInfo;
+    try {
+      streamingInfo = await StreamingService.getStreamingLink(
+        tmdbId: widget.tvId.toString(),
+        title: widget.tvShowName,
+        season: seasonNumber,
+        episode: episodeNumber,
+        resolution: resolution,
+        enableSubtitles: subtitles,
+        forDownload: true,
+      );
+    } catch (e) {
+      if (mounted) {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Failed to get download link: $e")),
+        );
+      }
+      return;
+    }
+
+    if (!mounted) {
+      Navigator.pop(context);
+      return;
+    }
+
+    final streamType = streamingInfo['type'] ?? 'm3u8';
+    final directory = Platform.isAndroid
+        ? (await getExternalStorageDirectory())!
+        : await getApplicationDocumentsDirectory();
+    final contentDir = Directory('${directory.path}/${widget.tvId}_S${seasonNumber}E$episodeNumber');
+    await contentDir.create(recursive: true);
+
+    String? playlistContent = streamingInfo['playlist'];
+    String? streamUrl = streamingInfo['url'];
+    String baseUrl = '';
+
+    // Check if the URL is Base64-encoded
+    if (streamUrl != null && streamType == 'm3u8') {
+      try {
+        // Try decoding the URL as Base64
+        final decodedBytes = base64Decode(streamUrl);
+        final decodedString = utf8.decode(decodedBytes);
+        if (decodedString.startsWith('#EXTM3U')) {
+          // If decoded string is an M3U8 playlist
+          playlistContent = decodedString;
+          streamUrl = null; // No URL needed since we have the playlist
+        } else if (Uri.tryParse(decodedString)?.isAbsolute == true) {
+          // If decoded string is a valid URL
+          streamUrl = decodedString;
+          final response = await http.get(Uri.parse(streamUrl));
+          if (response.statusCode == 200) {
+            playlistContent = response.body;
+          } else {
+            throw Exception('Failed to fetch M3U8 playlist');
+          }
+        }
+      } catch (e) {
+        debugPrint('Base64 decoding failed or not Base64: $e');
+        // If not Base64 or decoding fails, treat as regular URL
+        if (streamUrl != null && playlistContent == null) {
+          final response = await http.get(Uri.parse(streamUrl));
+          if (response.statusCode == 200) {
+            playlistContent = response.body;
+          } else {
+            throw Exception('Failed to fetch M3U8 playlist');
+          }
+        }
+      }
+    }
+
+    if (streamType == 'm3u8' && playlistContent != null) {
+      baseUrl = streamUrl != null
+          ? Uri.parse(streamUrl).resolve('.').toString()
+          : '';
+      final fileName = '${widget.tvShowName}-S${seasonNumber.toString().padLeft(2, '0')}E${episodeNumber.toString().padLeft(2, '0')}-$resolution.m3u8';
+      final segmentDir = Directory('${contentDir.path}/segments');
+      await segmentDir.create(recursive: true);
+
+      final lines = playlistContent.split('\n');
+      final segmentUrls = <String>[];
+      for (var line in lines) {
+        if (line.trim().endsWith('.ts')) {
+          final segmentUrl = baseUrl.isNotEmpty
+              ? Uri.parse(baseUrl).resolve(line.trim()).toString()
+              : line.trim();
+          segmentUrls.add(segmentUrl);
+        }
+      }
+
+      if (await Permission.storage.request().isGranted) {
+        for (var i = 0; i < segmentUrls.length; i++) {
+          final segmentUrl = segmentUrls[i];
+          final segmentFile = 'segment_$i.ts';
+          await FlutterDownloader.enqueue(
+            url: segmentUrl,
+            savedDir: segmentDir.path,
+            fileName: segmentFile,
+            showNotification: false,
+          );
+        }
+
+        final modifiedPlaylist = lines.map((line) {
+          if (line.trim().endsWith('.ts')) {
+            final index = segmentUrls.indexWhere((url) => url.endsWith(line.trim()));
+            return 'segments/segment_$index.ts';
+          }
+          return line;
+        }).join('\n');
+
+        final playlistFile = File('${contentDir.path}/$fileName');
+        await playlistFile.writeAsString(modifiedPlaylist);
+
+        await FlutterDownloader.enqueue(
+          url: 'file://${playlistFile.path}',
+          savedDir: contentDir.path,
+          fileName: fileName,
+          showNotification: true,
+          openFileFromNotification: true,
+        );
+
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Downloading $episodeName (M3U8)")),
+        );
+      } else {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Storage permission not granted")),
+        );
+      }
+    } else {
+      if (streamUrl == null || streamUrl.isEmpty) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Download URL not available")),
+        );
+        return;
+      }
+
+      if (await Permission.storage.request().isGranted) {
+        final fileName = streamType == 'mp4'
+            ? '${widget.tvShowName}-S${seasonNumber.toString().padLeft(2, '0')}E${episodeNumber.toString().padLeft(2, '0')}-$resolution.mp4'
+            : '${widget.tvShowName}-S${seasonNumber.toString().padLeft(2, '0')}E${episodeNumber.toString().padLeft(2, '0')}-$resolution.m3u8';
+        final taskId = await FlutterDownloader.enqueue(
+          url: streamUrl,
+          savedDir: contentDir.path,
+          fileName: fileName,
+          showNotification: true,
+          openFileFromNotification: true,
+        );
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Download started (Task ID: $taskId)")),
+        );
+      } else {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Storage permission not granted")),
+        );
+      }
+    }
+
+    if (mounted) {
+      Navigator.pop(context);
+    }
+  }
+
   void _showEpisodePlayOptionsModal(
       Map<String, dynamic> episode, int seasonNumber) {
     debugPrint(
@@ -1279,7 +1583,7 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
       ),
       builder: (modalContext) {
         return _EpisodePlayOptionsModal(
-          onConfirm: (resolution, subtitles) async {
+          onPlay: (resolution, subtitles) async {
             debugPrint(
                 'Episode play options confirmed: resolution=$resolution, subtitles=$subtitles');
             Navigator.pop(modalContext);
@@ -1301,6 +1605,20 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
                 resolution: resolution,
                 enableSubtitles: subtitles,
               );
+              // Handle Base64-encoded URL for streaming
+              if (streamingInfo['url'] != null && streamingInfo['type'] == 'm3u8') {
+                try {
+                  final decodedBytes = base64Decode(streamingInfo['url']!);
+                  final decodedString = utf8.decode(decodedBytes);
+                  if (Uri.tryParse(decodedString)?.isAbsolute == true) {
+                    streamingInfo['url'] = decodedString;
+                  } else if (decodedString.startsWith('#EXTM3U')) {
+                    streamingInfo['url'] = decodedString;
+                  }
+                } catch (e) {
+                  debugPrint('Base64 decoding for streaming URL failed: $e');
+                }
+              }
             } catch (e, stacktrace) {
               debugPrint("Streaming fetch error: $e");
               debugPrintStack(stackTrace: stacktrace);
@@ -1354,6 +1672,10 @@ class TVShowEpisodesSectionState extends State<TVShowEpisodesSection> {
                 ),
               );
             }
+          },
+          onDownload: (resolution, subtitles) async {
+            Navigator.pop(modalContext);
+            await _downloadEpisode(episode, seasonNumber, resolution, subtitles);
           },
         );
       },
@@ -1568,9 +1890,13 @@ class _EpisodeCard extends StatelessWidget {
 }
 
 class _EpisodePlayOptionsModal extends StatefulWidget {
-  final void Function(String, bool) onConfirm;
+  final void Function(String, bool) onPlay;
+  final void Function(String, bool) onDownload;
 
-  const _EpisodePlayOptionsModal({required this.onConfirm});
+  const _EpisodePlayOptionsModal({
+    required this.onPlay,
+    required this.onDownload,
+  });
 
   @override
   _EpisodePlayOptionsModalState createState() =>
@@ -1638,16 +1964,33 @@ class _EpisodePlayOptionsModalState extends State<_EpisodePlayOptionsModal> {
           ),
           const Spacer(),
           Center(
-            child: ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                  backgroundColor: settings.accentColor),
-              onPressed: () {
-                debugPrint(
-                    'Episode Play Now button pressed: resolution=$_resolution, subtitles=$_subtitles');
-                widget.onConfirm(_resolution, _subtitles);
-              },
-              child:
-                  const Text("Play Now", style: TextStyle(color: Colors.black)),
+            child: Column(
+              children: [
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                      backgroundColor: settings.accentColor),
+                  onPressed: () {
+                    debugPrint(
+                        'Episode Play Now button pressed: resolution=$_resolution, subtitles=$_subtitles');
+                    widget.onPlay(_resolution, _subtitles);
+                  },
+                  child: const Text("Play Now",
+                      style: TextStyle(color: Colors.black)),
+                ),
+                const SizedBox(height: 8),
+                OutlinedButton(
+                  style: OutlinedButton.styleFrom(
+                    side: BorderSide(color: settings.accentColor),
+                  ),
+                  onPressed: () {
+                    debugPrint(
+                        'Episode Download button pressed: resolution=$_resolution, subtitles=$_subtitles');
+                    widget.onDownload(_resolution, _subtitles);
+                  },
+                  child: Text("Download",
+                      style: TextStyle(color: settings.accentColor)),
+                ),
+              ],
             ),
           ),
           const SizedBox(height: 16),
