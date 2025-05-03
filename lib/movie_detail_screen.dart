@@ -114,6 +114,12 @@ class MovieDetailScreenState extends State<MovieDetailScreen> {
       );
       return;
     }
+    if (_isTvShow) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Please select an episode to download")),
+      );
+      return;
+    }
     showModalBottomSheet(
       context: context,
       shape: const RoundedRectangleBorder(
@@ -151,10 +157,12 @@ class MovieDetailScreenState extends State<MovieDetailScreen> {
         resolution: resolution,
         enableSubtitles: subtitles,
         forDownload: true,
+        forDownload: true,
       );
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Failed to get download link: $e")),
         SnackBar(content: Text("Failed to get download link: $e")),
       );
       return;
@@ -270,6 +278,27 @@ class MovieDetailScreenState extends State<MovieDetailScreen> {
         return;
       }
 
+      if (await Permission.storage.request().isGranted) {
+        final fileName = streamType == 'mp4'
+            ? '$title-$resolution.mp4'
+            : '$title-$resolution.m3u8';
+        final taskId = await FlutterDownloader.enqueue(
+          url: streamUrl,
+          savedDir: contentDir.path,
+          fileName: fileName,
+          showNotification: true,
+          openFileFromNotification: true,
+        );
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Download started (Task ID: $taskId)")),
+        );
+      } else {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Storage permission not granted")),
+        );
+      }
       if (await Permission.storage.request().isGranted) {
         final fileName = streamType == 'mp4'
             ? '$title-$resolution.mp4'
@@ -457,6 +486,8 @@ class MovieDetailScreenState extends State<MovieDetailScreen> {
             isFullSeason: isTvShow,
             episodeFiles: episodeFiles,
             similarMovies: _similarMovies,
+            subtitleUrl: subtitleUrl,
+            isHls: urlType == 'm3u8',
             subtitleUrl: subtitleUrl,
             isHls: urlType == 'm3u8',
           ),

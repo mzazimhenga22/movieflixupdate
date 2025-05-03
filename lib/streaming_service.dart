@@ -38,6 +38,7 @@ class StreamingService {
       'tmdbId': tmdbId,
       'title': title,
       'releaseYear': DateTime.now().year.toString(),
+      'releaseYear': DateTime.now().year.toString(),
       if (isShow) ...{
         'seasonNumber': season.toString(),
         'seasonTmdbId': seasonTmdbId ?? tmdbId,
@@ -112,6 +113,7 @@ class StreamingService {
 
         final dir = await getTemporaryDirectory();
         final file = File('${dir.path}/$tmdbId-playlist.m3u8');
+        await file.writeAsString(playlist);
         await file.writeAsString(playlist);
         streamUrl = file.path;
       } else {
