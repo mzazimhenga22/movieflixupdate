@@ -157,12 +157,10 @@ class MovieDetailScreenState extends State<MovieDetailScreen> {
         resolution: resolution,
         enableSubtitles: subtitles,
         forDownload: true,
-        forDownload: true,
       );
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Failed to get download link: $e")),
         SnackBar(content: Text("Failed to get download link: $e")),
       );
       return;
@@ -486,8 +484,6 @@ class MovieDetailScreenState extends State<MovieDetailScreen> {
             isFullSeason: isTvShow,
             episodeFiles: episodeFiles,
             similarMovies: _similarMovies,
-            subtitleUrl: subtitleUrl,
-            isHls: urlType == 'm3u8',
             subtitleUrl: subtitleUrl,
             isHls: urlType == 'm3u8',
           ),
